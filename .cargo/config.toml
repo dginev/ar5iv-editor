@@ -1,0 +1,5 @@
+# latexml-oxide compiles a few crates (notably latexml_contrib) that drive
+# rustc's own stack into overflow at the default 8 MB. Match the upstream
+# project's own `.cargo/config.toml` and bump it for the build environment.
+[env]
+RUST_MIN_STACK = "16777216"

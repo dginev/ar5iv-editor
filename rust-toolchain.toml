@@ -1,0 +1,6 @@
+[toolchain]
+# latexml-oxide (path dep on `latexml`) uses `#![feature(thread_local)]`
+# in latexml_core, which requires nightly. Pin here so the whole
+# ar5iv-editor workspace builds on the right toolchain.
+channel = "nightly"
+components = ["rustfmt", "clippy"]

@@ -1,0 +1,47 @@
+[package]
+name = "ar5iv-editor-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Axum + WebSocket server hosting the ar5iv-editor LaTeX web editor."
+
+[lib]
+name = "ar5iv_editor"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ar5iv-editor"
+path = "src/main.rs"
+
+[dependencies]
+ar5iv-editor-protocol = { workspace = true }
+
+axum = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true }
+
+askama = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+num_cpus = { workspace = true }
+futures-util = { workspace = true }
+
+# The real conversion engine. Path dep until latexml-oxide ships as a crate.
+# `latexml` (== latexml_oxide) uses Rc / TLS / globals throughout, so we run
+# all conversions on a single dedicated 256 MB-stack worker thread (see
+# `convert.rs`). Adjust the path if the local checkout lives elsewhere.
+latexml = { path = "../../../latexml-oxide/latexml_oxide" }
+latexml_core = { path = "../../../latexml-oxide/latexml_core" }
+log = "0.4"
+
+[dev-dependencies]
+tokio-tungstenite = "0.24"
