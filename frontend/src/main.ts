@@ -1,6 +1,6 @@
 import "./styles.css";
 import { createEditor, type EditorTheme } from "./editor.ts";
-import { ConvertClient, type ConvertResponse } from "./ws.ts";
+import { ConvertClient, type ConvertResponse, type Diagnostic } from "./ws.ts";
 import { renderResult, showLog, setPreviewTheme } from "./preview.ts";
 import { EXAMPLES_LIST } from "./examples.ts";
 import {
@@ -179,6 +179,93 @@ function fmtBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Map a server diagnostic's `severity` to the three values
+ *  CodeMirror's lint extension understands. Fatal collapses to
+ *  error; info passes through. */
+function cmSeverity(s: Diagnostic["severity"]): "info" | "warning" | "error" {
+  if (s === "fatal" || s === "error") return "error";
+  if (s === "warning") return "warning";
+  return "info";
+}
+
+/** Render or hide the source-pane header badge that surfaces
+ *  unanchored diagnostics (errors that the engine couldn't tie to
+ *  a specific line — typically global, anonymous-buffer, or upstream
+ *  locator-coverage gaps). The badge shows a circled "!" with a
+ *  count and a hover tooltip listing the messages. */
+function applyHeaderBadge(unanchored: Diagnostic[]): void {
+  const headerEl = document
+    .querySelector<HTMLElement>(".pane-source > .pane-header");
+  if (!headerEl) return;
+  let badge = document.getElementById("diag-badge");
+  if (!unanchored.length) {
+    if (badge) badge.remove();
+    return;
+  }
+  if (!badge) {
+    badge = document.createElement("button");
+    badge.id = "diag-badge";
+    badge.type = "button";
+    badge.className = "diag-badge";
+    headerEl.appendChild(badge);
+  }
+  const errs = unanchored.filter((d) => d.severity === "error" || d.severity === "fatal").length;
+  const warns = unanchored.filter((d) => d.severity === "warning").length;
+  badge.classList.toggle("diag-badge--error", errs > 0);
+  badge.classList.toggle("diag-badge--warn", errs === 0 && warns > 0);
+  badge.textContent = `⓵`.replace("⓵", "ⓘ"); // base symbol; replaced below by severity
+  // Use a circled "!" for errors, circled "i" for info-only, circled
+  // "?" for warning-only. Unicode glyphs picked for legibility at
+  // 12 px.
+  badge.textContent = errs > 0 ? "❗" : warns > 0 ? "⚠" : "ℹ";
+  badge.title = unanchored
+    .map((d) => `[${d.severity}] ${d.category}: ${d.message.split("\n")[0]}`)
+    .join("\n");
+  // Click toggles a popup listing every unanchored diagnostic.
+  badge.onclick = () => togglePopup(unanchored);
+}
+
+function togglePopup(diags: Diagnostic[]): void {
+  let pop = document.getElementById("diag-popup");
+  if (pop) {
+    pop.remove();
+    return;
+  }
+  pop = document.createElement("div");
+  pop.id = "diag-popup";
+  pop.className = "diag-popup";
+  pop.innerHTML = diags
+    .map(
+      (d) =>
+        `<div class="diag-popup__row diag-popup__row--${d.severity}">` +
+        `<span class="diag-popup__sev">[${d.severity}]</span> ` +
+        `<span class="diag-popup__cat">${escapeHtml(d.category)}</span>` +
+        `<div class="diag-popup__msg">${escapeHtml(d.message)}</div>` +
+        `</div>`,
+    )
+    .join("");
+  // Anchor below the badge.
+  const badge = document.getElementById("diag-badge");
+  if (badge) {
+    const rect = badge.getBoundingClientRect();
+    pop.style.top = `${rect.bottom + 4}px`;
+    pop.style.right = `${window.innerWidth - rect.right}px`;
+  }
+  document.body.appendChild(pop);
+  // Click-outside to dismiss.
+  const off = (ev: MouseEvent) => {
+    if (!pop?.contains(ev.target as Node) && ev.target !== badge) {
+      pop?.remove();
+      document.removeEventListener("click", off, true);
+    }
+  };
+  setTimeout(() => document.addEventListener("click", off, true), 0);
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 async function main(): Promise<void> {
   const initialEditorTheme = chromeToEditor(readChromeTheme());
   setPreviewTheme(initialEditorTheme);
@@ -297,6 +384,44 @@ async function main(): Promise<void> {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
+  /** Split engine diagnostics into editor-anchored (a `from_line` is
+   *  set AND the diagnostic targets the active buffer) and
+   *  unanchored (everything else). The active-buffer match accepts
+   *  `Anonymous String` (which the literal-source convert path
+   *  always reports) as a synonym for the active file. */
+  function applyDiagnostics(diags: Diagnostic[]): void {
+    const anchored: Array<{
+      severity: "info" | "warning" | "error";
+      message: string;
+      fromLine: number;
+      fromCol?: number;
+      toLine?: number;
+      toCol?: number;
+    }> = [];
+    const unanchored: Diagnostic[] = [];
+    for (const d of diags) {
+      const targetsActive =
+        d.source === "Anonymous String" || d.source === activePath;
+      if (d.from_line && targetsActive) {
+        anchored.push({
+          severity: cmSeverity(d.severity),
+          message: `${d.category}: ${d.message.split("\n")[0]}`,
+          fromLine: d.from_line,
+          fromCol: d.from_col,
+          toLine: d.to_line,
+          toCol: d.to_col,
+        });
+      } else if (d.severity !== "info") {
+        // Don't surface raw info messages as banner badges; they're
+        // noisy ("strings_allocated", "Conversion complete: …") and
+        // not actionable.
+        unanchored.push(d);
+      }
+    }
+    editor.setDiagnostics(anchored);
+    applyHeaderBadge(unanchored);
+  }
+
   try {
     await setActiveFile(activePath);
   } catch (e) {
@@ -343,6 +468,7 @@ async function main(): Promise<void> {
       return;
     }
     statusEl().textContent = resp.status || "ok";
+    applyDiagnostics(resp.diagnostics ?? []);
     const t_render0 = performance.now();
     renderResult(resp.result);
     const t_render1 = performance.now();

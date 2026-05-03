@@ -2,7 +2,9 @@ use std::sync::Arc;
 use std::sync::mpsc as std_mpsc;
 use std::time::Instant;
 
-use ar5iv_editor_protocol::{ConvertRequest, ConvertResponse, Timings};
+use ar5iv_editor_protocol::{
+    ConvertRequest, ConvertResponse, Diagnostic, Severity, Timings,
+};
 use latexml::converter::Converter as OxideConverter;
 use latexml::post::{PostOptions, run_post_processing};
 use latexml_core::common::{Config as OxideConfig, DataSize, OutputFormat};
@@ -75,6 +77,7 @@ fn worker_main(rx: std_mpsc::Receiver<Job>) {
                         version: stale_version,
                         log: String::new(),
                         timings: None,
+                        diagnostics: Vec::new(),
                     });
                     req = newer_req;
                     session = newer_session;
@@ -169,6 +172,7 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
     let xml = match resp.result {
         Some(x) => x,
         None => {
+            let diagnostics = parse_diagnostics(&resp.log);
             return ConvertResponse {
                 id,
                 result: String::new(),
@@ -177,6 +181,7 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
                 version,
                 log: resp.log,
                 timings: None,
+                diagnostics,
             };
         }
     };
@@ -217,6 +222,7 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
     // leaks the session dir layout into the page. Rewrite to the
     // file-route URL the browser *can* fetch.
     let html = rewrite_session_paths(&html_raw, &session.dir, &session.id.to_string());
+    let diagnostics = parse_diagnostics(&resp.log);
 
     let dt_total = t_total.elapsed();
     eprintln!(
@@ -243,7 +249,137 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
             post_ms: dt_post.as_millis() as u64,
             total_ms: dt_total.as_millis() as u64,
         }),
+        diagnostics,
     }
+}
+
+/// Parse the engine's captured log buffer into structured
+/// diagnostics. The format the LatexmlLogger writes is:
+///
+/// ```text
+/// {Severity}:{Category}:{Object} {message-first-line}
+/// \tat {source}; line N col M[ - line N col M]
+/// \t[detail line(s)]
+/// \tIn {rust_file}:{rust_line}:{rust_column}
+/// ```
+///
+/// Continuation lines start with a tab; record boundaries start at
+/// column 0 with a known severity prefix. We collect each record's
+/// severity / category / first-line / location and surface them on
+/// the convert response so the frontend can attach them to editor
+/// lines.
+pub fn parse_diagnostics(log: &str) -> Vec<Diagnostic> {
+    let mut out: Vec<Diagnostic> = Vec::new();
+    let mut current: Option<Diagnostic> = None;
+
+    for line in log.lines() {
+        if let Some((sev, rest)) = split_severity(line) {
+            // Flush any in-flight diagnostic.
+            if let Some(d) = current.take() {
+                out.push(d);
+            }
+            // `rest` looks like "{Category}:{Object} {message…}". Split
+            // on the first space to separate the header tag from the
+            // human-facing message.
+            let (header, message) = match rest.find(' ') {
+                Some(i) => (rest[..i].to_string(), rest[i + 1..].to_string()),
+                None => (rest.to_string(), String::new()),
+            };
+            current = Some(Diagnostic {
+                severity: sev,
+                category: header,
+                message,
+                source: None,
+                from_line: None,
+                from_col: None,
+                to_line: None,
+                to_col: None,
+            });
+            continue;
+        }
+
+        // Continuation lines start with a tab.
+        if let Some(rest) = line.strip_prefix('\t')
+            && let Some(diag) = current.as_mut()
+        {
+            // The "In file:line:col" line is internal Rust loc — skip.
+            if rest.starts_with("In ") {
+                continue;
+            }
+            if let Some(loc) = rest.strip_prefix("at ") {
+                fill_location(diag, loc);
+                continue;
+            }
+            // Generic detail line — append to message if not already
+            // verbose.
+            if !rest.is_empty() {
+                if !diag.message.is_empty() {
+                    diag.message.push('\n');
+                }
+                diag.message.push_str(rest);
+            }
+        }
+    }
+
+    if let Some(d) = current.take() {
+        out.push(d);
+    }
+    out
+}
+
+fn split_severity(line: &str) -> Option<(Severity, &str)> {
+    for (prefix, sev) in [
+        ("Fatal:", Severity::Fatal),
+        ("Error:", Severity::Error),
+        ("Warn:", Severity::Warning),
+        ("Info:", Severity::Info),
+    ] {
+        if let Some(rest) = line.strip_prefix(prefix) {
+            return Some((sev, rest));
+        }
+    }
+    None
+}
+
+/// Parse the `at <source>; line N col M [- line N col M]` payload.
+fn fill_location(diag: &mut Diagnostic, loc: &str) {
+    // Split off the source via the first `; ` — earlier semicolons
+    // could appear in pathological filenames, but the engine's
+    // `Locator::Display` always uses exactly that separator.
+    let (source, rest) = match loc.find(';') {
+        Some(i) => (loc[..i].trim().to_string(), &loc[i + 1..]),
+        None => (loc.trim().to_string(), ""),
+    };
+    diag.source = Some(source);
+
+    // Parse "line N[ col M]" segments. The locator can render either
+    // a single position or a range "line A col B - line C col D".
+    let mut segments = rest.split('-').map(str::trim);
+    if let Some(from) = segments.next() {
+        let (l, c) = parse_line_col(from);
+        diag.from_line = l;
+        diag.from_col = c;
+    }
+    if let Some(to) = segments.next() {
+        let (l, c) = parse_line_col(to);
+        diag.to_line = l;
+        diag.to_col = c;
+    }
+}
+
+fn parse_line_col(seg: &str) -> (Option<u32>, Option<u32>) {
+    // "line N col M"  or  "line N"
+    let mut line = None;
+    let mut col = None;
+    let mut tokens = seg.split_ascii_whitespace().peekable();
+    while let Some(tok) = tokens.next() {
+        match tok {
+            "line" => line = tokens.next().and_then(|n| n.parse().ok()),
+            "col"  => col = tokens.next().and_then(|n| n.parse().ok()),
+            _ => {}
+        }
+    }
+    (line, col)
 }
 
 /// Rewrite any `src="..."` or `href="..."` whose path lives under
@@ -309,6 +445,110 @@ mod tests {
             file_count:    AtomicU32::new(0),
             version:       AtomicU64::new(0),
         })
+    }
+
+    #[test]
+    fn parses_a_synthetic_undefined_macro_log() {
+        // Synthetic — no engine boot. The shape mirrors what
+        // `LatexmlLogger` writes per record. We cover both the
+        // single-position locator and the range form.
+        let log = "\
+Error:Undefined:\\foo Undefined control sequence \\foo\n\
+\tat Anonymous String; line 1 col 12\n\
+\tdetail line one\n\
+\tIn gullet.rs:201:13\n\
+Warn:Recovery:something Patched up after the error\n\
+\tat Anonymous String; line 4 col 7 - line 4 col 21\n\
+\tIn gullet.rs:309:5\n";
+        let diags = parse_diagnostics(log);
+        assert_eq!(diags.len(), 2, "got: {diags:#?}");
+        assert!(matches!(diags[0].severity, Severity::Error));
+        assert_eq!(diags[0].category, "Undefined:\\foo");
+        assert_eq!(diags[0].source.as_deref(), Some("Anonymous String"));
+        assert_eq!(diags[0].from_line, Some(1));
+        assert_eq!(diags[0].from_col, Some(12));
+        assert_eq!(diags[0].to_line, None);
+        assert!(matches!(diags[1].severity, Severity::Warning));
+        assert_eq!(diags[1].from_line, Some(4));
+        assert_eq!(diags[1].from_col, Some(7));
+        assert_eq!(diags[1].to_line, Some(4));
+        assert_eq!(diags[1].to_col, Some(21));
+    }
+
+    #[tokio::test]
+    async fn parses_two_undefined_macros_from_real_engine_run() {
+        // The latexml-oxide logger has to own the global `log` slot
+        // for `bind_log` / `flush_log` to capture anything; in
+        // production this happens in `main.rs`. Initialise it
+        // best-effort here (the production binary may already have
+        // claimed the slot under cargo test's shared logger; in that
+        // case `init` returns Err and we just continue).
+        let _ = latexml_core::util::logger::init(log::LevelFilter::Info);
+
+        // Fixture as given by the user. Two undefined macros
+        // separated by blank lines so the line-numbering can be
+        // visually verified: `\foo` on line 1, `\also` on line 4.
+        let dir = tempfile::tempdir().unwrap();
+        let session = make_test_session(dir.path().to_path_buf());
+        std::fs::write(
+            dir.path().join("main.tex"),
+            "This is undefined \\foo done.\n\n\n This \\also undefined.",
+        )
+        .unwrap();
+
+        let c = Converter::new(1);
+        let resp = c
+            .convert(
+                ConvertRequest {
+                    id: 99,
+                    active_file: "main.tex".into(),
+                    version: 1,
+                    preamble: None,
+                    profile: Some("fragment".into()),
+                    format: Some("html5".into()),
+                    preload: vec![],
+                },
+                session,
+            )
+            .await;
+        eprintln!(
+            "[diag-test] status={:?} status_code={} diagnostics={:#?}\n--- log ---\n{}",
+            resp.status, resp.status_code, resp.diagnostics, resp.log,
+        );
+
+        // The engine emits the undefined-macro errors with category
+        // `undefined:\foo` / `undefined:\also` (lowercase `undefined`,
+        // see `state.rs:1084`). For this particular code path the
+        // locator returns `Locator::default()` — TeX line/col are
+        // currently unset upstream. So we assert on:
+        //   (1) both errors are surfaced to the wire,
+        //   (2) the parser correctly attributes them to the right
+        //       macro names,
+        //   (3) the (potentially unanchored) source string is what
+        //       the engine actually emits.
+        // When latexml-oxide grows locator coverage for this path,
+        // the same diagnostics will start carrying `from_line` and
+        // the frontend's gutter-marker code will pick them up
+        // automatically.
+        let undef: Vec<_> = resp
+            .diagnostics
+            .iter()
+            .filter(|d| d.category.starts_with("undefined:"))
+            .collect();
+        assert!(
+            undef.len() >= 2,
+            "expected >= 2 undefined diagnostics, got {undef:#?}"
+        );
+        let foo = undef
+            .iter()
+            .find(|d| d.category.contains("\\foo"))
+            .expect("undefined:\\foo not seen");
+        assert!(matches!(foo.severity, Severity::Error));
+        let also = undef
+            .iter()
+            .find(|d| d.category.contains("\\also"))
+            .expect("undefined:\\also not seen");
+        assert!(matches!(also.severity, Severity::Error));
     }
 
     #[test]

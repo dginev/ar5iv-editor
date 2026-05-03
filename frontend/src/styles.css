@@ -468,6 +468,67 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - 3.2rem); 
   border-color: var(--accent);
 }
 
+/* -------- diagnostic header badge + popup -------- */
+.diag-badge {
+  margin-left: 0.5rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink-muted);
+  font-size: 0.95rem;
+  padding: 0 0.3rem;
+  border-radius: 50%;
+  cursor: pointer;
+  line-height: 1.6;
+}
+.diag-badge:hover {
+  background: var(--bg-elev);
+  color: var(--accent);
+}
+.diag-badge--warn  { color: var(--warn); }
+.diag-badge--error { color: var(--bad); }
+
+.diag-popup {
+  position: fixed;
+  z-index: 90;
+  max-width: min(36rem, calc(100vw - 2rem));
+  max-height: 50vh;
+  overflow: auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  box-shadow: var(--shadow-lg);
+  padding: 0.5rem;
+  font-family: var(--sans);
+  font-size: 0.85rem;
+}
+.diag-popup__row {
+  padding: 0.4rem 0.55rem;
+  border-radius: 3px;
+}
+.diag-popup__row + .diag-popup__row { margin-top: 0.2rem; }
+.diag-popup__row--error { border-left: 3px solid var(--bad); padding-left: 0.45rem; }
+.diag-popup__row--fatal { border-left: 3px solid var(--bad); padding-left: 0.45rem; }
+.diag-popup__row--warning { border-left: 3px solid var(--warn); padding-left: 0.45rem; }
+.diag-popup__row--info { border-left: 3px solid var(--rule); padding-left: 0.45rem; }
+.diag-popup__sev {
+  text-transform: uppercase;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  color: var(--ink-muted);
+}
+.diag-popup__cat {
+  font-family: var(--mono);
+  color: var(--ink);
+  font-weight: 600;
+}
+.diag-popup__msg {
+  margin-top: 0.2rem;
+  white-space: pre-wrap;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
 /* -------- toasts -------- */
 .toast-stack {
   position: fixed;

@@ -57,6 +57,41 @@ pub struct ConvertResponse {
     pub log: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timings: Option<Timings>,
+    /// Parsed engine messages with location info, so the frontend can
+    /// annotate the editor lines in the right buffer (or surface
+    /// unanchored ones in a header badge). Empty for clean runs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Info,
+    Warning,
+    Error,
+    Fatal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Diagnostic {
+    pub severity: Severity,
+    /// Short label rendered before the message, e.g. `Undefined:\foo`.
+    pub category: String,
+    pub message:  String,
+    /// The source filename the engine attributed the message to. For
+    /// literal-source conversions this is `"Anonymous String"`, which
+    /// the frontend remaps to the request's `active_file`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source:   Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_col:  Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_line:   Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_col:    Option<u32>,
 }
 
 impl ConvertResponse {
@@ -70,6 +105,7 @@ impl ConvertResponse {
             version: 0,
             log: msg,
             timings: None,
+            diagnostics: Vec::new(),
         }
     }
 
@@ -85,6 +121,7 @@ impl ConvertResponse {
             version: 0,
             log: String::new(),
             timings: None,
+            diagnostics: Vec::new(),
         }
     }
 }

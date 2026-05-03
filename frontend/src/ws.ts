@@ -18,6 +18,19 @@ export interface Timings {
   total_ms: number;
 }
 
+export type Severity = "info" | "warning" | "error" | "fatal";
+
+export interface Diagnostic {
+  severity: Severity;
+  category: string;
+  message:  string;
+  source?:   string;
+  from_line?: number;
+  from_col?:  number;
+  to_line?:   number;
+  to_col?:    number;
+}
+
 export interface ConvertResponse {
   id: number;
   result: string;
@@ -27,6 +40,10 @@ export interface ConvertResponse {
   version: number;
   log: string;
   timings?: Timings;
+  /** Parsed engine diagnostics. Empty for clean runs. The frontend
+   *  attaches line-anchored entries to the editor and unanchored
+   *  ones to the source-pane header badge. */
+  diagnostics?: Diagnostic[];
 }
 
 export interface ConvertClientOpts {

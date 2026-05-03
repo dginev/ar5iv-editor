@@ -22,8 +22,26 @@ import {
 import { oneDark } from "@codemirror/theme-one-dark";
 import { githubLight } from "@uiw/codemirror-theme-github";
 import { latex } from "codemirror-lang-latex";
+import {
+  setDiagnostics,
+  lintGutter,
+  type Diagnostic as CmDiagnostic,
+} from "@codemirror/lint";
 
 export type EditorTheme = "light" | "dark";
+
+/** Line-anchored diagnostic from the convert engine, in the shape
+ *  the editor wants — already filtered to the active buffer's
+ *  source by the caller. */
+export interface LineDiagnostic {
+  severity: "info" | "warning" | "error";
+  message:  string;
+  /** 1-indexed line number in the buffer. */
+  fromLine: number;
+  fromCol?: number;
+  toLine?:  number;
+  toCol?:   number;
+}
 
 export interface EditorHandle {
   /** Open or switch to a buffer keyed by `path`. If the buffer
@@ -46,6 +64,10 @@ export interface EditorHandle {
   onChange(cb: (path: string, source: string) => void): void;
   /** Switch the editor (and every cached buffer) to the given theme. */
   setTheme(theme: EditorTheme): void;
+  /** Replace the lint markers on the active buffer. Pass `[]` to
+   *  clear. The caller is responsible for filtering server-side
+   *  diagnostics down to those that target the active file. */
+  setDiagnostics(diags: LineDiagnostic[]): void;
 }
 
 /** One per open file; held in `BufferStore` and swapped through the
@@ -70,6 +92,7 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
 
   const buildExtensions = (theme: EditorTheme): Extension[] => [
     lineNumbers(),
+    lintGutter(),
     highlightSpecialChars(),
     history(),
     drawSelection(),
@@ -158,6 +181,40 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
       view.dispatch({
         effects: themeCompartment.reconfigure(themeOf(theme)),
       });
+    },
+    setDiagnostics(diags) {
+      const cm: CmDiagnostic[] = [];
+      const doc = view.state.doc;
+      for (const d of diags) {
+        // Clamp the 1-based line to the buffer's current line count.
+        // A stale convert response can name a line past the end of
+        // the buffer if the user has just deleted lines; render at
+        // the last line in that case.
+        const lineNo = Math.max(1, Math.min(d.fromLine, doc.lines));
+        const line = doc.line(lineNo);
+        let from = line.from + Math.max(0, (d.fromCol ?? 1) - 1);
+        let to = from;
+        if (d.toLine !== undefined) {
+          const tln = Math.max(1, Math.min(d.toLine, doc.lines));
+          const tline = doc.line(tln);
+          to = tline.from + Math.max(0, (d.toCol ?? line.length) - 1);
+        } else if (d.fromCol !== undefined) {
+          to = Math.min(line.to, from + 1);
+        } else {
+          // No column info — mark the whole line.
+          from = line.from;
+          to = line.to;
+        }
+        from = Math.max(line.from, Math.min(from, doc.length));
+        to = Math.max(from, Math.min(to, doc.length));
+        cm.push({
+          from,
+          to,
+          severity: d.severity,
+          message: d.message,
+        });
+      }
+      view.dispatch(setDiagnostics(view.state, cm));
     },
   };
 }
