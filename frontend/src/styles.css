@@ -85,7 +85,18 @@
 /* -------- base -------- */
 
 *, *::before, *::after { box-sizing: border-box; }
-html, body { height: 100%; }
+/* The marketing pages and editor shell both share this stylesheet.
+   `min-height: 100%` (instead of `height: 100%`) lets the editor
+   page grow taller than the viewport when the preview pane has lots
+   of content — the *outer* page scrolls, not the preview itself. */
+html, body { min-height: 100%; }
+
+/* Header height — used by sticky-positioned content under the
+   header to know how far to offset itself. The 2.85rem figure
+   matches the actual rendered header (`padding: 0.65rem` × 2 +
+   the logo / button content row) plus a 1px bottom border. Bump
+   if the header layout changes. */
+:root { --header-h: 2.85rem; }
 body {
   margin: 0;
   background: var(--bg);
@@ -126,6 +137,11 @@ button:hover { border-color: var(--accent); color: var(--accent); }
   padding: 0.65rem 1.5rem;
   border-bottom: 1px solid var(--rule);
   background: var(--bg-elev);
+  /* Stick the header to the top of the viewport so it stays visible
+     while the page scrolls (when the preview is long). */
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 .ar5iv-logo {
   font-family: var(--serif);
@@ -246,11 +262,14 @@ button:hover { border-color: var(--accent); color: var(--accent); }
 
 /* -------- editor shell -------- */
 
-main { display: flex; flex-direction: column; min-height: calc(100vh - 3.2rem); }
+main { display: flex; flex-direction: column; min-height: calc(100vh - var(--header-h)); }
 /* Three-pane layout: files | source | preview, with a 4 px draggable
    resizer between each pair. Default widths come from the CSS vars
    below; `resizers.ts` updates them on drag and persists to
-   localStorage. The preview takes the remaining 1fr. */
+   localStorage. The preview takes the remaining 1fr column.
+   `align-items: start` lets each column size independently — the
+   file panel + source stay viewport-bounded (and sticky), while the
+   preview grows to its natural height and the *page* scrolls. */
 .ar5iv-editor-shell {
   display: grid;
   grid-template-columns:
@@ -259,28 +278,51 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - 3.2rem); 
     var(--w-source, 32rem)
     4px
     minmax(0, 1fr);
+  align-items: start;
   flex: 1;
-  min-height: 0;
 }
 .pane {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 0;
   background: var(--bg-elev);
+}
+/* File panel + source pane are sticky to the top edge of the viewport
+   (just below the header) so they stay visible while the user scrolls
+   the page to read a long preview. Their internal regions
+   (`.file-tree`, `.codemirror-host`) keep their own scrolling. */
+.pane-files,
+.pane-source {
+  position: sticky;
+  top: var(--header-h);
+  /* Bound height to the viewport-minus-header so internal scroll
+     regions actually have a finite height to scroll inside. */
+  height: calc(100vh - var(--header-h));
 }
 .pane-files {
   border-right: 1px solid var(--rule);
   background: var(--bg-sunken);
 }
 .pane-source { border-right: 1px solid var(--rule); }
+.pane-preview {
+  /* No height constraint — let the preview content drive the column
+     height, which the outer page then scrolls. The preview pane has
+     a viewport-min so the LaTeXML footer doesn't crowd the bottom of
+     the editor on a clean welcome doc. */
+  min-height: calc(100vh - var(--header-h));
+}
 
 .resizer {
   cursor: col-resize;
   background: var(--rule);
   /* Wider hit-area than the visual line so the cursor change feels
-     comfortable, while the visual remains a 4 px slot. */
-  position: relative;
+     comfortable, while the visual remains a 4 px slot.
+     Sticky alongside the panes so dragging works at any scroll
+     position; without an explicit height the grid row would
+     collapse to 0 with `align-items: start`. */
+  position: sticky;
+  top: var(--header-h);
+  height: calc(100vh - var(--header-h));
 }
 .resizer::before {
   content: "";
@@ -704,14 +746,19 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - 3.2rem); 
 }
 
 .preview {
+  /* No internal scrollbar — content drives the height, page scrolls.
+     `flex: 1` keeps it expanding within the pane's flex container. */
   flex: 1;
   min-height: 0;
-  overflow: auto;
   background: var(--bg-elev);
 }
 .log {
+  /* The conversion log can be much longer than the viewport; keeping
+     it internally scrollable here is intentional, so toggling on the
+     log doesn't make the page jump to a new height. */
   flex: 1;
   min-height: 0;
+  max-height: calc(100vh - var(--header-h));
   overflow: auto;
   margin: 0;
   padding: 0.8rem 1rem;
