@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}ar5iv-editor &mdash; services{% endblock %}
+{% block main %}
+<section class="landing">
+  <header class="landing-hero">
+    <h1>ar5iv-editor</h1>
+    <p class="lead">
+      A Rust port of <a href="https://github.com/dginev/LaTeXML-Plugin-ltxmojo">ltxmojo</a>:
+      a small web frontend for <code>latexml-oxide</code> that converts LaTeX to HTML5
+      with native MathML.
+    </p>
+  </header>
+
+  <ul class="service-grid">
+    <li class="service-card">
+      <h2><a href="/editor">Web Editor</a></h2>
+      <p>Live LaTeX-to-HTML preview, served over a WebSocket. Type in the left pane, watch the right pane re-render.</p>
+    </li>
+    <li class="service-card service-card--disabled">
+      <h2>Upload &amp; Convert <span class="badge">coming soon</span></h2>
+      <p>Drop a <code>.tex</code> file (or archive) and download the converted HTML. Not yet wired up in the Rust port.</p>
+    </li>
+    <li class="service-card">
+      <h2><a href="/about">About</a></h2>
+      <p>What this project is, where it came from, and how it relates to the original Perl/Mojolicious plugin.</p>
+    </li>
+    <li class="service-card">
+      <h2><a href="/help">Help</a></h2>
+      <p>Quick notes on using the editor: preamble splitting, the conversion log, keyboard tips.</p>
+    </li>
+  </ul>
+</section>
+{% endblock %}

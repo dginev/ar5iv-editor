@@ -1,16 +1,16 @@
 use askama::Template;
 use axum::{
     http::StatusCode,
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Response},
 };
 
 use crate::{
     error::AppError,
-    templates::{AboutTemplate, EditorTemplate, HelpTemplate},
+    templates::{AboutTemplate, EditorTemplate, HelpTemplate, IndexTemplate},
 };
 
-pub async fn index() -> Redirect {
-    Redirect::to("/about")
+pub async fn index() -> Result<Response, AppError> {
+    Ok(render_html(StatusCode::OK, IndexTemplate.render()?))
 }
 
 pub async fn editor() -> Result<Response, AppError> {

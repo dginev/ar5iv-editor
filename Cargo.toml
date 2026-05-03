@@ -31,3 +31,27 @@ anyhow = "1"
 
 num_cpus = "1"
 futures-util = "0.3"
+
+# Release profile tuned for the conversion server: fat LTO collapses crate
+# boundaries (latexml-oxide is many small crates), codegen-units = 1 lets
+# the optimizer see whole functions, and stripping symbols shrinks the
+# binary. Keep `panic = "unwind"` — the worker in `convert.rs` relies on
+# `catch_unwind` to absorb latexml-oxide panics without taking down the
+# process; switching to abort would crash the server on each bad input.
+# Cost: clean release builds take noticeably longer.
+[profile.release]
+opt-level     = 3
+lto           = "fat"
+codegen-units = 1
+debug         = 0
+strip         = "symbols"
+incremental   = false
+overflow-checks = false
+
+# A modest middle ground for development of the release pipeline itself —
+# `cargo build --profile release-fast` skips fat LTO so iteration is bearable
+# while still running optimised code.
+[profile.release-fast]
+inherits      = "release"
+lto           = "thin"
+codegen-units = 16

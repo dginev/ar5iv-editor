@@ -5,6 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}ar5iv-editor{% endblock %}</title>
     <link rel="stylesheet" href="/static/style.css" />
+    {# Inline so the theme is applied before first paint, avoiding a flash. #}
+    <script>
+      (function () {
+        var KEY = "ar5iv-editor-theme";
+        var THEMES = ["paper", "midnight", "terminal"];
+        var saved = localStorage.getItem(KEY);
+        var initial = THEMES.indexOf(saved) >= 0
+          ? saved
+          : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "midnight"
+              : "paper");
+        document.documentElement.dataset.theme = initial;
+        window.__ar5ivTheme = {
+          get: function () { return document.documentElement.dataset.theme; },
+          set: function (t) {
+            if (THEMES.indexOf(t) < 0) return;
+            document.documentElement.dataset.theme = t;
+            localStorage.setItem(KEY, t);
+            window.dispatchEvent(new CustomEvent("ar5iv:themechange", { detail: { theme: t } }));
+          },
+          cycle: function () {
+            var cur = document.documentElement.dataset.theme;
+            var next = THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length];
+            this.set(next);
+          },
+        };
+      })();
+    </script>
     {% block head %}{% endblock %}
   </head>
   <body>
@@ -14,10 +42,24 @@
         <a href="/editor">Editor</a>
         <a href="/about">About</a>
         <a href="/help">Help</a>
-        <button id="theme-toggle" type="button">Theme</button>
+        <button id="theme-toggle" type="button" title="Cycle theme">Theme</button>
       </nav>
     </header>
     <main>{% block main %}{% endblock %}</main>
+    <script>
+      (function () {
+        var btn = document.getElementById("theme-toggle");
+        if (!btn) return;
+        var label = function () {
+          var t = window.__ar5ivTheme.get();
+          btn.textContent = t;
+          btn.setAttribute("aria-label", "Theme: " + t + " — click to cycle");
+        };
+        label();
+        btn.addEventListener("click", function () { window.__ar5ivTheme.cycle(); });
+        window.addEventListener("ar5iv:themechange", label);
+      })();
+    </script>
     {% block scripts %}{% endblock %}
   </body>
 </html>

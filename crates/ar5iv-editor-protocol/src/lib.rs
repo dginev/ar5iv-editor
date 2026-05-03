@@ -20,6 +20,17 @@ pub struct ConvertRequest {
     pub preload: Vec<String>,
 }
 
+/// Server-side timing breakdown for one conversion. `build_us` is in
+/// microseconds (sub-millisecond on warm runs); the rest are milliseconds.
+/// Absent on `superseded` / fatal responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Timings {
+    pub build_us: u64,
+    pub convert_ms: u64,
+    pub post_ms: u64,
+    pub total_ms: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConvertResponse {
     pub id: u64,
@@ -27,6 +38,8 @@ pub struct ConvertResponse {
     pub status: String,
     pub status_code: i32,
     pub log: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timings: Option<Timings>,
 }
 
 impl ConvertResponse {
@@ -38,6 +51,7 @@ impl ConvertResponse {
             status: msg.clone(),
             status_code: 3,
             log: msg,
+            timings: None,
         }
     }
 }

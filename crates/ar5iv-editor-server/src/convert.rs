@@ -1,4 +1,4 @@
-use ar5iv_editor_protocol::{ConvertRequest, ConvertResponse};
+use ar5iv_editor_protocol::{ConvertRequest, ConvertResponse, Timings};
 use latexml::converter::Converter as OxideConverter;
 use latexml::post::{PostOptions, run_post_processing};
 use latexml_core::common::{Config as OxideConfig, DataSize, OutputFormat};
@@ -64,6 +64,7 @@ fn worker_main(rx: std_mpsc::Receiver<Job>) {
                         status: "superseded".into(),
                         status_code: 0,
                         log: String::new(),
+                        timings: None,
                     });
                     req = newer_req;
                     reply = newer_reply;
@@ -142,6 +143,7 @@ fn convert_one(req: ConvertRequest) -> ConvertResponse {
                 status: resp.status,
                 status_code: resp.status_code as i32,
                 log: resp.log,
+                timings: None,
             };
         }
     };
@@ -190,6 +192,12 @@ fn convert_one(req: ConvertRequest) -> ConvertResponse {
         status: resp.status,
         status_code: resp.status_code as i32,
         log: resp.log,
+        timings: Some(Timings {
+            build_us: dt_build.as_micros() as u64,
+            convert_ms: dt_convert.as_millis() as u64,
+            post_ms: dt_post.as_millis() as u64,
+            total_ms: dt_total.as_millis() as u64,
+        }),
     }
 }
 

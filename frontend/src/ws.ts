@@ -7,12 +7,20 @@ export interface ConvertRequest {
   preload?: string[];
 }
 
+export interface Timings {
+  build_us: number;
+  convert_ms: number;
+  post_ms: number;
+  total_ms: number;
+}
+
 export interface ConvertResponse {
   id: number;
   result: string;
   status: string;
   status_code: number;
   log: string;
+  timings?: Timings;
 }
 
 export interface ConvertClientOpts {

@@ -18,14 +18,21 @@
         <div class="pane pane-source">
           <div class="pane-header">
             <select id="example-select"><option value="" disabled selected hidden>&mdash; examples &mdash;</option></select>
-            <span id="status">ready</span>
+          </div>
+          <div class="pane-stats" id="source-stats">
+            <span class="caption">Source</span>
+            <span id="char-count" class="muted">0 chars</span>
           </div>
           <div id="codemirror-host" class="codemirror-host"></div>
         </div>
         <div class="pane pane-preview">
           <div class="pane-header">
             <span id="preview-title">Preview</span>
-            <span id="counter" class="muted">0</span>
+          </div>
+          <div class="pane-stats" id="preview-stats" aria-live="polite">
+            <span class="caption">Conversion stats</span>
+            <span id="status">ready</span>
+            <span id="timings" class="timings"></span>
           </div>
           <div id="preview" class="preview"></div>
           <pre id="log" class="log" hidden></pre>

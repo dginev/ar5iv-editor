@@ -24,23 +24,89 @@ const AR5IV_HOST_DEFAULTS = `
       --math-caligraphic-font-family: "latin modern math", "Cambria Math", math;
       --code-font-family: "Noto Sans Mono", "Noto Sans Mono Fallback", monospace;
       --svg-text-size: 0.82em;
-      --background-color: white;
-      --text-color: #292929;
-      --border-color: #292929;
-      --border-light-color: grey;
-      --image-color: black;
+      /* Map ar5iv's color tokens onto the chrome theme so the preview
+         surface matches the editor surface in every mode (paper / midnight
+         / terminal). Custom properties cascade through the shadow boundary,
+         so document-level chrome vars are visible here. Each mapping has
+         the ar5iv default as a fallback. */
+      --background-color:    var(--bg-elev, white);
+      --text-color:          var(--ink, #292929);
+      --border-color:        var(--ink, #292929);
+      --border-light-color:  var(--rule, grey);
+      --image-color:         black;
       --image-background-color: white;
-      --link-text-color: #212121;
-      --email-link-color: #026ecb;
-      --note-mark-color: #026ecb;
-      --note-highlight-color: #ffffd4;
-      --info-text-color: #01719d;
-      --warning-text-color: #d09e05;
-      --error-text-color: #d8000c;
-      --fatal-text-color: var(--error-text-color);
-      --index-ref-color: var(--email-link-color);
+      --link-text-color:     var(--ink, #212121);
+      --email-link-color:    var(--accent, #026ecb);
+      --note-mark-color:     var(--accent, #026ecb);
+      --note-highlight-color: var(--accent-soft, #ffffd4);
+      --info-text-color:     var(--ink-soft, #01719d);
+      --warning-text-color:  var(--warn, #d09e05);
+      --error-text-color:    var(--bad, #d8000c);
+      --fatal-text-color:    var(--error-text-color);
+      --index-ref-color:     var(--email-link-color);
       color: var(--text-color);
       background-color: var(--background-color);
+    }
+    /* ar5iv.css binds color/bg on \`body\`, but our shadow root has no body —
+       only \`#preview-root-host\`. Without this rule \`color\` inherits the
+       :host default (computed against light-mode \`--text-color\`) and never
+       picks up the dark-theme value the \`[data-theme="dark"]\` rule sets on
+       the inner host. Re-evaluating both on the inner host fixes contrast
+       in dark mode. The \`min-height: 100%\` keeps the preview surface
+       coloured all the way to the bottom of the pane (otherwise the chrome
+       background pokes through under short documents). */
+    #preview-root-host {
+      color: var(--text-color);
+      background-color: var(--background-color);
+      min-height: 100%;
+      box-sizing: border-box;
+    }
+    /* Override ar5iv.css's hard-coded dark palette (\`[data-theme="dark"]\`,
+       specificity 0,0,1) with the chrome theme's own dark values via an
+       ID-qualified selector (specificity 1,0,1). This makes the preview
+       reuse midnight / terminal palettes instead of ar5iv's #0d1117 +
+       #c9d1d9 pair. Note: \`--image-color\` / \`--image-background-color\`
+       are intentionally kept at ar5iv's dark defaults because they drive
+       per-image filter inversions independent of chrome theming. */
+    #preview-root-host[data-theme="dark"] {
+      --background-color:    var(--bg-elev, #0d1117);
+      --text-color:          var(--ink, #c9d1d9);
+      --border-color:        var(--ink-soft, #c9d1d9);
+      --border-light-color:  var(--rule, #292929);
+      --link-text-color:     var(--ink, #c9d1d9);
+      --email-link-color:    var(--accent, #58a6ff);
+      --note-mark-color:     var(--accent, #58a6ff);
+      --note-highlight-color: var(--accent-soft, #3a2a00);
+      --info-text-color:     var(--ink-soft, #58a6ff);
+      --warning-text-color:  var(--warn, #d29922);
+      --error-text-color:    var(--bad, #f85149);
+    }
+    /* ar5iv.css gives framed-text variants only horizontal padding, so a
+       span whose content is only whitespace collapses to a 0-height sliver
+       once it's promoted to inline-block. Hold the box open with vertical
+       padding + a min-height, and force a glyph for the truly-empty case. */
+    .ltx_framed_rectangle,
+    .ltx_framed_topbottom,
+    .ltx_framed_top,
+    .ltx_framed_bottom,
+    .ltx_framed_underline,
+    .ltx_framed_left,
+    .ltx_framed_right,
+    .ltx_framed_leftright {
+      padding-top: 0.15rem;
+      padding-bottom: 0.15rem;
+      min-height: 1em;
+      vertical-align: middle;
+    }
+    .ltx_framed_rectangle:empty::before,
+    .ltx_framed_topbottom:empty::before,
+    .ltx_framed_top:empty::before,
+    .ltx_framed_bottom:empty::before,
+    .ltx_framed_underline:empty::before,
+    .ltx_framed_left:empty::before,
+    .ltx_framed_right:empty::before,
+    .ltx_framed_leftright:empty::before {
+      content: "\\00a0";
     }
   </style>
 `;
