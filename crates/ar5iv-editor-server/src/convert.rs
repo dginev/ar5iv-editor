@@ -101,7 +101,7 @@ fn worker_main(rx: std_mpsc::Receiver<Job>) {
 fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
     let id = req.id;
     let version = req.version;
-    let whatsin = match req.profile.as_deref().unwrap_or("fragment") {
+    let mut whatsin = match req.profile.as_deref().unwrap_or("fragment") {
         "math" => DataSize::Math,
         "document" => DataSize::Document,
         _ => DataSize::Fragment,
@@ -137,6 +137,23 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
             );
         }
     };
+
+    // ltxmojo (the predecessor) sniffed the input for `\documentclass`
+    // and switched its `whatsin` from "fragment" to "document" when
+    // the source was a complete LaTeX document. Without this every
+    // `\usepackage` and other preamble-only command in the file
+    // surfaces as "can only appear in the preamble" errors, because
+    // the fragment profile wraps the source in a default preamble +
+    // `\begin{document}` before the engine sees the file's own
+    // `\usepackage` calls.
+    //
+    // We promote on the server side rather than asking the frontend
+    // to set the right profile: the source of truth is the file
+    // itself, and we'd rather not depend on the client knowing the
+    // convention.
+    if matches!(whatsin, DataSize::Fragment) && contains_documentclass(&tex) {
+        whatsin = DataSize::Document;
+    }
 
     let opts = OxideConfig {
         // verbosity 1 = "normal" — emits Info!() messages so the per-request
@@ -409,6 +426,42 @@ fn parse_line_col(seg: &str) -> (Option<u32>, Option<u32>) {
     (line, col)
 }
 
+/// Lightweight check for `\documentclass{...}` in a TeX source. Skips
+/// commented-out lines (a `%` before `\documentclass` on the same
+/// line). Used by `convert_one` to auto-promote `whatsin: Fragment`
+/// to `whatsin: Document` when the file is a complete LaTeX doc.
+fn contains_documentclass(tex: &str) -> bool {
+    for line in tex.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('%') {
+            continue;
+        }
+        // Same-line `%` before `\documentclass` means the directive
+        // is commented out. Cheap split-and-check.
+        if let Some(idx) = trimmed.find("\\documentclass") {
+            let prefix = &trimmed[..idx];
+            // A `%` in the prefix that isn't escaped (`\%`) comments out
+            // the rest of the line — skip.
+            if has_unescaped_percent(prefix) {
+                continue;
+            }
+            return true;
+        }
+    }
+    false
+}
+
+fn has_unescaped_percent(s: &str) -> bool {
+    let mut prev_was_backslash = false;
+    for c in s.chars() {
+        if c == '%' && !prev_was_backslash {
+            return true;
+        }
+        prev_was_backslash = c == '\\' && !prev_was_backslash;
+    }
+    false
+}
+
 /// Rewrite `src="..."` and `href="..."` attributes in the post-
 /// processed HTML so the browser can fetch session-local files via
 /// our file route. Two rewrite cases:
@@ -606,6 +659,32 @@ Warn:Recovery:something Patched up after the error\n\
             .find(|d| d.category.contains("\\also"))
             .expect("undefined:\\also not seen");
         assert!(matches!(also.severity, Severity::Error));
+    }
+
+    #[test]
+    fn documentclass_detector_handles_common_cases() {
+        // Bare body — no \documentclass.
+        assert!(!contains_documentclass(r"Hello \(x^2\)."));
+        // Standard preamble.
+        assert!(contains_documentclass(
+            "\\documentclass{article}\n\\begin{document}\nHi\n\\end{document}"
+        ));
+        // Indented (blank lines / tabs before).
+        assert!(contains_documentclass(
+            "\n\n  \\documentclass[12pt]{article}\n"
+        ));
+        // Commented-out line should NOT count.
+        assert!(!contains_documentclass(
+            "% \\documentclass{article}\nbody only"
+        ));
+        // Same-line % before \documentclass — also commented out.
+        assert!(!contains_documentclass(
+            "stuff % then \\documentclass{article}\n"
+        ));
+        // Escaped \% before \documentclass — the directive is real.
+        assert!(contains_documentclass(
+            "stuff \\% then \\documentclass{article}\n"
+        ));
     }
 
     #[test]

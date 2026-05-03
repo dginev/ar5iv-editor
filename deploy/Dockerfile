@@ -26,9 +26,18 @@
 FROM rust:1-slim-bookworm AS builder
 WORKDIR /build
 
+# Captured at script-time by `deploy/build-and-push.sh` and forwarded
+# via `--build-arg`. Used by `crates/ar5iv-editor-server/build.rs` to
+# embed the latexml-oxide commit identity into the binary so the
+# preview header can render a "powered by latexml-oxide @<sha>" link.
+ARG LATEXML_OXIDE_SHA=unknown
+ARG LATEXML_OXIDE_DATE=unknown
+
 ENV RUST_MIN_STACK=16777216 \
     RUSTFLAGS="-C target-cpu=x86-64-v3" \
-    CARGO_TERM_COLOR=always
+    CARGO_TERM_COLOR=always \
+    LATEXML_OXIDE_SHA=$LATEXML_OXIDE_SHA \
+    LATEXML_OXIDE_DATE=$LATEXML_OXIDE_DATE
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config libxml2-dev libxslt1-dev libssl-dev clang \

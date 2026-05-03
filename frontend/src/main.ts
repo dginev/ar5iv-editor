@@ -266,6 +266,36 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+interface VersionInfo {
+  latexml_oxide: { sha: string; date: string; url: string };
+}
+
+/** Fetch `/api/version` and render a right-aligned link in the
+ *  preview-pane header so the user always knows which latexml-oxide
+ *  build the conversion backend is running. The link points at the
+ *  exact commit's tree on GitHub when the SHA is known. */
+async function bootVersionMarker(): Promise<void> {
+  const headerEl = document.querySelector<HTMLElement>(
+    ".pane-preview > .pane-header",
+  );
+  if (!headerEl) return;
+  try {
+    const resp = await fetch("/api/version");
+    if (!resp.ok) return;
+    const v = (await resp.json()) as VersionInfo;
+    const a = document.createElement("a");
+    a.className = "preview-version";
+    a.href = v.latexml_oxide.url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.title = `latexml-oxide build at commit ${v.latexml_oxide.sha} (${v.latexml_oxide.date})`;
+    a.textContent = `latexml-oxide ${v.latexml_oxide.date} · ${v.latexml_oxide.sha}`;
+    headerEl.appendChild(a);
+  } catch (e) {
+    console.warn("version fetch failed", e);
+  }
+}
+
 async function main(): Promise<void> {
   const initialEditorTheme = chromeToEditor(readChromeTheme());
   setPreviewTheme(initialEditorTheme);
@@ -276,6 +306,7 @@ async function main(): Promise<void> {
   const editor = createEditor(host, initialEditorTheme);
   bootResizers();
   bootLogToggle();
+  void bootVersionMarker();
 
   // The chrome theme is owned by the inline script in base.html; listen for
   // its change event and propagate to the editor and preview only.

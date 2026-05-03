@@ -181,6 +181,50 @@ async fn path_traversal_is_rejected_at_resolve_chokepoint() {
 }
 
 #[tokio::test]
+async fn bare_get_file_works_without_x_ar5iv_user() {
+    // The browser can't add custom headers to `<img src="...">` and
+    // similar driven-by-the-browser fetches. Authorize the GET file
+    // route on the 256-bit SessionId alone — knowing the URL is
+    // unforgeable, and the route is read-only.
+    let rig = TestRig::boot(default_session_cfg()).await;
+    let user = rig.mint_user().await;
+    let s = rig.create_session(&user, "blank").await;
+    let id = s["id"].as_str().unwrap();
+
+    let resp = rig
+        .client
+        .get(rig.url(&format!("/api/session/{id}/files/main.tex")))
+        // Note: no X-Ar5iv-User header — like a `<img src=...>` GET.
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("documentclass"));
+}
+
+#[tokio::test]
+async fn get_file_with_wrong_header_is_403() {
+    // If the caller *does* present an X-Ar5iv-User header on GET
+    // but it's the wrong user_id, that's a deliberate forgery
+    // attempt — surface as 403 rather than the bare-GET 200.
+    let rig = TestRig::boot(default_session_cfg()).await;
+    let alice = rig.mint_user().await;
+    let bob = rig.mint_user().await;
+    let s = rig.create_session(&alice, "blank").await;
+    let id = s["id"].as_str().unwrap();
+
+    let resp = rig
+        .client
+        .get(rig.url(&format!("/api/session/{id}/files/main.tex")))
+        .header(HEADER_USER, &bob)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
 async fn foreign_user_cannot_access_session() {
     let rig = TestRig::boot(default_session_cfg()).await;
     let alice = rig.mint_user().await;

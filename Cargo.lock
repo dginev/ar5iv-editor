@@ -1123,6 +1123,7 @@ dependencies = [
  "latexml_math_parser",
  "latexml_package",
  "latexml_post",
+ "libc",
  "libxml",
  "log",
  "mimalloc",
@@ -1234,6 +1235,7 @@ name = "latexml_post"
 version = "0.2.0"
 dependencies = [
  "imagesize",
+ "latexml_core",
  "libxml",
  "libxslt",
  "log",

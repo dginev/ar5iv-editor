@@ -188,7 +188,26 @@ async fn get_file(
     headers: HeaderMap,
     AxumPath((id, rel)): AxumPath<(String, String)>,
 ) -> Result<Response, AppError> {
-    let session = require_session(&state, &headers, &id).await?;
+    // GET file is the one route the browser hits without our custom
+    // `X-Ar5iv-User` header — `<img src="...">`, `<a href=...>` and
+    // download links can't add custom headers. Authorize on the
+    // 256-bit SessionId alone here: knowing the full URL is already
+    // unforgeable (the same threshold as a bearer token), and
+    // because the route is read-only there's no state-change risk.
+    // Mutating routes (PUT / DELETE / POST below) still require the
+    // X-Ar5iv-User header AND match it against the session's owner.
+    let sid = SessionId::parse(&id)?;
+    let session = state.sessions.get(&sid).await?;
+    if let Ok(uid) = extract_user(&headers)
+        && session.user_id != uid
+    {
+        // If the caller *did* present a header but it's wrong,
+        // surface the mismatch as 403 — this is a deliberate fetch
+        // by something that knows the protocol, not a bare image
+        // GET. (Without a header, fall through to the public-by-id
+        // path above.)
+        return Err(AppError::forbidden());
+    }
     session.touch();
     let path = session.resolve(&rel)?;
     let bytes = tokio::fs::read(&path).await.map_err(map_io_err_with(&session))?;
