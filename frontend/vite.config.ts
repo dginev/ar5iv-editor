@@ -1,4 +1,11 @@
 import { defineConfig } from "vite";
+import { resolve } from "node:path";
+
+// `examples/` lives at the workspace root, one level above this frontend
+// project, so both the Rust server (via `include_dir!`) and the frontend
+// (via `import.meta.glob`) can read the same source of truth. Vite's
+// default fs.allow blocks reads outside the project root, so we extend it.
+const repoRoot = resolve(__dirname, "..");
 
 export default defineConfig({
   build: {
@@ -14,8 +21,16 @@ export default defineConfig({
     },
     cssCodeSplit: false,
   },
+  resolve: {
+    alias: {
+      "@examples": resolve(repoRoot, "examples"),
+    },
+  },
   server: {
     port: 5173,
+    fs: {
+      allow: [repoRoot],
+    },
     proxy: {
       "/convert": { target: "ws://127.0.0.1:3000", ws: true },
       "/about":  "http://127.0.0.1:3000",

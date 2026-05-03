@@ -1,0 +1,63 @@
+# Fly.io alternate deploy path. Pick this over Vultr if you'd rather
+# `fly deploy` from a git push than manage a docker-compose on a VPS.
+#
+# Usage from the repo root:
+#
+#     fly launch --no-deploy --copy-config --config deploy/fly.toml
+#     fly secrets set ANUBIS_KEY=$(openssl rand -hex 32)
+#     fly deploy --dockerfile deploy/Dockerfile
+#
+# Anubis is left out of this config — Fly's edge handles a lot of
+# the bot mitigation that Anubis would otherwise do, and the Caddy /
+# TLS layer is provided by Fly itself. If you want Anubis-style
+# challenges anyway, run it as a sidecar in this app: add a second
+# `[[services]]` block on port 8080 and route the public proxy
+# through it.
+
+app = "ar5iv-editor-demo"
+primary_region = "iad"   # change to lhr / fra / nrt / syd as needed
+
+[build]
+  dockerfile = "deploy/Dockerfile"
+
+[env]
+  AR5IV_EDITOR_BIND = "0.0.0.0:3000"
+  AR5IV_EDITOR_STATIC_DIR = "/app/frontend/dist"
+  AR5IV_EDITOR_SESSIONS_DIR = "/var/ar5iv-sessions"
+  AR5IV_EDITOR_QUOTA_PER_IP = "4"
+  AR5IV_EDITOR_SESSION_IDLE_SECS = "300"
+  AR5IV_EDITOR_QUOTA_ROOT_BYTES = "1073741824"   # 1 GB
+  RUST_LOG = "info,ar5iv_editor=info"
+
+[[services]]
+  internal_port = 3000
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "requests"
+    hard_limit = 200
+    soft_limit = 100
+
+[[vm]]
+  # `performance-2x` = 2 dedicated vCPUs at boost clocks (AMD/Intel
+  # depending on region), competitive with Hetzner CCX13 on
+  # warm-conversion latency. ~$11/mo + RAM at 1 GB ≈ $14-15/mo total.
+  size = "performance-2x"
+  memory = "1gb"
+
+[[mounts]]
+  source = "ar5iv_sessions"
+  destination = "/var/ar5iv-sessions"
+
+[[restart]]
+  policy = "on-failure"
+  max_retries = 5

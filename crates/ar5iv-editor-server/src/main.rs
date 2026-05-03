@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use ar5iv_editor::{AppState, config::Config, convert::Converter, router};
+use ar5iv_editor::{
+    AppState, config::Config, convert::Converter, examples::ExampleCatalog, router,
+    session::SessionRegistry,
+};
 use tower_http::services::ServeDir;
 use tracing::info;
 
@@ -26,8 +29,28 @@ async fn main() -> anyhow::Result<()> {
     let cfg = Config::load()?;
     info!(?cfg, "starting ar5iv-editor");
 
+    // Make sure the sessions root exists before any handler tries to
+    // create a tmpdir under it. Failure here is fatal — without a
+    // sessions root the file routes are broken from the first request.
+    tokio::fs::create_dir_all(&cfg.session.sessions_dir)
+        .await
+        .with_context(|| format!("creating sessions root {}", cfg.session.sessions_dir.display()))?;
+
+    let sessions = Arc::new(SessionRegistry::new(cfg.session.clone()));
+    // A previous run may have left dirs behind under the sessions
+    // root; the registry is empty at this point so every on-disk dir
+    // counts as an orphan and the sweep deletes anything stale by
+    // mtime (with a length+alphabet shape filter so we don't touch
+    // hand-placed admin files). See `SessionRegistry::sweep_orphans`.
+    sessions.sweep_orphans().await;
+    let _gc = sessions.spawn_gc();
+
+    let examples = Arc::new(ExampleCatalog::load().context("loading examples manifest")?);
+
     let state = AppState {
         converter: Arc::new(Converter::new(cfg.max_in_flight)),
+        sessions,
+        examples,
     };
 
     // The library default uses `frontend/dist`; if the user pointed elsewhere

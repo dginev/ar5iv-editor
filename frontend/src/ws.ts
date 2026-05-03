@@ -1,6 +1,10 @@
 export interface ConvertRequest {
   id: number;
-  tex: string;
+  /** Path of the file to convert, relative to the active session. */
+  active_file: string;
+  /** Session `version` counter at request time. Server echoes; client
+   *  uses to discard responses that race a still-pending write. */
+  version: number;
   preamble?: string;
   profile?: string;
   format?: string;
@@ -14,13 +18,32 @@ export interface Timings {
   total_ms: number;
 }
 
+export type Severity = "info" | "warning" | "error" | "fatal";
+
+export interface Diagnostic {
+  severity: Severity;
+  category: string;
+  message:  string;
+  source?:   string;
+  from_line?: number;
+  from_col?:  number;
+  to_line?:   number;
+  to_col?:    number;
+}
+
 export interface ConvertResponse {
   id: number;
   result: string;
   status: string;
   status_code: number;
+  /** Echo of the request's `version`. */
+  version: number;
   log: string;
   timings?: Timings;
+  /** Parsed engine diagnostics. Empty for clean runs. The frontend
+   *  attaches line-anchored entries to the editor and unanchored
+   *  ones to the source-pane header badge. */
+  diagnostics?: Diagnostic[];
 }
 
 export interface ConvertClientOpts {

@@ -43,5 +43,26 @@ latexml = { path = "../../../latexml-oxide/latexml_oxide" }
 latexml_core = { path = "../../../latexml-oxide/latexml_core" }
 log = "0.4"
 
+# 256-bit OsRng tokens for UserId / SessionId, base64url-encoded — see
+# `session.rs` and `docs/FileUI.md`. `getrandom` already pulls OsRng in
+# transitively, so the cost is essentially the small `rand_core` shim.
+rand = { version = "0.9", default-features = false, features = ["std", "std_rng", "os_rng"] }
+base64 = "0.22"
+
+# Embed the top-level `examples/` tree into the server binary, mirroring
+# the frontend's Vite-glob over the same directory.
+include_dir = "0.7"
+
+# Archive import (ZIP + tar.gz) and ZIP export. See `archive.rs` and
+# `docs/FileUI.md` "Archive upload — ZIP and tar.gz".
+zip = { version = "5", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"
+sha2 = "0.10"
+
 [dev-dependencies]
 tokio-tungstenite = "0.24"
+tempfile = "3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+filetime = "0.2"
+zip = { version = "5", default-features = false, features = ["deflate"] }

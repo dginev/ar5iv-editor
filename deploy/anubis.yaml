@@ -1,0 +1,53 @@
+# Anubis policy for ar5iv-editor — deny by default, browsers only.
+#
+# See https://anubis.techaro.lol/docs/ for the full policy reference.
+# Mount this file into the Anubis container at /data/cfg/botPolicies.yaml
+# (the path the upstream image expects). The accompanying
+# `docker-compose.yml` does that automatically.
+#
+# Threat model:
+#
+# Anonymous file uploads + LaTeX compute + free disk + WebSockets is
+# exactly the kind of free-compute target that aggressive scrapers go
+# after. Anubis sits in front of the Axum binary and forces every
+# requester to clear a JS-based proof-of-work challenge before the
+# editor surface (`/editor`, `/api/*`, `/convert`) is reachable.
+# The cost a bot pays to clear Anubis dwarfs the cost of opening a
+# session, and the user's per-tab + per-IP caps remain as a second
+# layer in case a scripted client does manage to clear the gate.
+#
+# Once a browser passes, Anubis sets a signed cookie; subsequent
+# requests in that browser session sail through without re-prompting.
+# Default token lifetime is generous enough that a user opens the app
+# once and edits in for hours without re-challenge.
+#
+# Schema note: each bot rule must set exactly one matcher kind
+# (user_agent_regex OR path_regex OR headers_regex OR
+# remote_addresses). We use path-based matching here so search
+# engines indexing the marketing pages and humans hitting the editor
+# get the right treatment based on URL alone.
+
+bots:
+  # Allow the marketing surface without a JS challenge so search
+  # engines and link-previewers (Slack, Discord, etc.) can fetch
+  # `/about`, `/help`, the static assets, and the favicon. This is
+  # safe because none of these endpoints touch the engine or
+  # session state.
+  - name: marketing-pages
+    path_regex: ^/(about|help|static/|favicon)
+    action: ALLOW
+
+  # Everything else — the editor surface (/editor), the API
+  # (/api/*), and the WebSocket (/convert) — gets a JS challenge.
+  # Browsers clear it once and keep a cookie; scripted clients
+  # don't get past it.
+  - name: deny-everything-else
+    path_regex: .*
+    action: CHALLENGE
+
+# Anubis forwards `Upgrade: websocket` and chunked uploads correctly,
+# which is what `/convert` (WS) and the streaming multipart routes
+# (`POST /api/session/{id}/upload`, `POST /api/session/{id}/upload-archive`,
+# `POST /api/import-archive`) need. Verify on first deploy by uploading
+# a non-trivial archive and watching the convert preview update — if
+# either piece breaks the symptom is immediate and obvious.

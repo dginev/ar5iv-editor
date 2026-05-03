@@ -1,0 +1,58 @@
+# docker-compose for the demo deploy: Anubis fronts the Axum binary,
+# Caddy is left to the host (see deploy/cloud-demo.md). Tuned for
+# Vultr High-Frequency 2 GB (1 vCPU, 2 GB RAM); see the comments
+# next to each value if you're on a bigger box.
+
+services:
+  anubis:
+    image: ghcr.io/techarohq/anubis:latest
+    restart: unless-stopped
+    environment:
+      BIND: ":8080"
+      TARGET: "http://ar5iv-editor:3000"
+      POLICY_FNAME: "/data/cfg/botPolicies.yaml"
+      ED25519_PRIVATE_KEY_HEX: "${ANUBIS_KEY:?set ANUBIS_KEY in .env to a hex-encoded ed25519 private key}"
+      COOKIE_DOMAIN: "${COOKIE_DOMAIN:-}"
+    volumes:
+      - ./anubis.yaml:/data/cfg/botPolicies.yaml:ro
+    ports:
+      - "127.0.0.1:8080:8080"   # Caddy on the host fronts this
+    depends_on:
+      - ar5iv-editor
+
+  ar5iv-editor:
+    image: "${AR5IV_IMAGE:-ghcr.io/yourorg/ar5iv-editor:latest}"
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      AR5IV_EDITOR_BIND: "0.0.0.0:3000"
+      AR5IV_EDITOR_STATIC_DIR: "/app/frontend/dist"
+      AR5IV_EDITOR_SESSIONS_DIR: "/var/ar5iv-sessions"
+      RUST_LOG: "info,ar5iv_editor=info"
+      # Demo-tightened quotas — tighter than the library defaults
+      # so a single visitor can't pin the box. Bump back up if you
+      # promote this from a demo.
+      AR5IV_EDITOR_QUOTA_PER_IP: "4"
+      AR5IV_EDITOR_SESSION_IDLE_SECS: "300"
+      AR5IV_EDITOR_QUOTA_ROOT_BYTES: "536870912"   # 512 MB
+    volumes:
+      - ar5iv-sessions:/var/ar5iv-sessions
+    # CPU pinning on a 2-vCPU host: pin the convert worker container
+    # to core 0 so the latexml-oxide thread runs uncontested. Anubis +
+    # the kernel + Caddy share core 1. The single CPU on HF 2 GB
+    # makes pinning a no-op (only one core); leave the line in for
+    # the upgrade path. Drop it if your host has only one core
+    # exposed to docker.
+    cpuset: "0"
+
+volumes:
+  ar5iv-sessions:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      # 512 MB on a 2 GB host leaves room for Anubis (~30 MB), the
+      # Axum binary + worker (~250 MB), the kernel, and Caddy.
+      # Bump to 1 GB on the 4 GB tier or 2 GB on Hetzner CCX13.
+      o: "size=512m"

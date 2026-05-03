@@ -1,0 +1,36 @@
+\section{First Example}
+\begin{tabular}{|c|ccc|r|}
+	\hline
+$k$ &  $x_1^k$    &   $x_2^k$  & $x_3^k$   & remarks  \\
+	\hline
+0   & -0.3 & 0.6 & 0.7  &  \\
+1   & 0.47102965 & 0.04883157 & -0.53345964  & *\\
+2   & 0.49988691 & 0.00228830 & -0.52246185 & $s_3$ \\
+3   & 0.49999976 & 0.00005380 & -0.52365600  & \\
+4   & 0.5 & 0.00000307 & -0.52359743  & $\epsilon < 10^{-5}$ \\
+7   & 0.5 & 0 & -0.52359878  & $\epsilon < \xi $ \\
+	\hline
+\end{tabular}
+\section{Second Example}
+\begin{tabular}{|c|r@{.}lr@{.}lr@{.}l||r|}
+	\hline
+\multicolumn{8}{|c|}
+	{Iteration $k$ of $f(x_n)$} \\
+\textbf{\em k}
+	& \multicolumn{2}{c}{$x_1^k$}
+	& \multicolumn{2}{c}{$x_2^k$}
+	& \multicolumn{2}{c||}{$x_3^k$}
+	& remarks \\ \hline \hline
+0   & -0&3                 & 0&6                 &  0&7   & - \\
+1   &  0&47102965 & 0&04883157 & -0&53345964  & $\delta<\epsilon$ \\
+2   &  0&49988691 & 0&00228830 & -0&52246185  & $\delta < \varepsilon$ \\
+3   &  0&49999976 & 0&00005380 & -0&523656   &   $N$ \\
+4   &  0&5                 & 0&00000307 & -0&52359743  & \\
+$\vdots$	& \multicolumn{2}{c}{$\vdots$}
+	& \multicolumn{2}{c}{$\ddots$}
+	& \multicolumn{2}{c||}{$\vdots$}  & \\
+7   &  0&5   & 0&0    & \textbf{-0}&\textbf{52359878}
+		 & $\delta<10^{-8}$ \\ \hline
+\end{tabular}
+
+Source: \url{http://amath.colorado.edu/documentation/LaTeX/reference/tables/}

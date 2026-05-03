@@ -15,6 +15,19 @@
     </header>
     <main>
       <section class="ar5iv-editor-shell">
+        <div class="pane pane-files">
+          <div class="pane-header">
+            <span class="pane-title">Files</span>
+            <span class="pane-actions" aria-hidden="true">
+              <button id="file-new" type="button" title="New file (Phase 5)" disabled>+</button>
+              <button id="file-upload" type="button" title="Upload (Phase 5)" disabled>↑</button>
+            </span>
+          </div>
+          <div id="file-tree" class="file-tree" role="tree"></div>
+        </div>
+        <div class="resizer" data-edge="files-source" role="separator"
+             aria-orientation="vertical" tabindex="0"
+             aria-label="Resize file panel"></div>
         <div class="pane pane-source">
           <div class="pane-header">
             <select id="example-select"><option value="" disabled selected hidden>&mdash; examples &mdash;</option></select>
@@ -25,6 +38,9 @@
           </div>
           <div id="codemirror-host" class="codemirror-host"></div>
         </div>
+        <div class="resizer" data-edge="source-preview" role="separator"
+             aria-orientation="vertical" tabindex="0"
+             aria-label="Resize source panel"></div>
         <div class="pane pane-preview">
           <div class="pane-header">
             <span id="preview-title">Preview</span>

@@ -1,0 +1,21 @@
+\documentclass[a4paper]{book}
+\usepackage[german,czech,brazilian]{babel}%italian
+
+\begin{document}
+\frontmatter
+\chapter{introdução}
+...
+\mainmatter
+\selectlanguage{czech}
+\chapter{Czech Chapter}
+
+\foreignlanguage{german}{German Text: Babel mu\ss auch deutsche Umlaute richtig
+anzeigen: "o, "a, "u, "A, "O, "U; und das scharfe \ss}
+
+\selectlanguage{brazilian}
+\chapter{Brazilian Chapter}
+...
+\appendix
+\chapter{Apêndice}
+...
+\end{document}
