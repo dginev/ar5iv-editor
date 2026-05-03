@@ -1,13 +1,19 @@
+use std::sync::Arc;
+use std::sync::mpsc as std_mpsc;
+use std::time::Instant;
+
 use ar5iv_editor_protocol::{ConvertRequest, ConvertResponse, Timings};
 use latexml::converter::Converter as OxideConverter;
 use latexml::post::{PostOptions, run_post_processing};
 use latexml_core::common::{Config as OxideConfig, DataSize, OutputFormat};
-use std::sync::mpsc as std_mpsc;
-use std::time::Instant;
 use tokio::sync::oneshot;
 use tracing::error;
 
-type Job = (ConvertRequest, oneshot::Sender<ConvertResponse>);
+use crate::session::Session;
+
+/// One conversion job: the WS request plus the session it ran inside,
+/// plus a oneshot for the response.
+type Job = (ConvertRequest, Arc<Session>, oneshot::Sender<ConvertResponse>);
 
 pub struct Converter {
     tx: std_mpsc::Sender<Job>,
@@ -33,10 +39,10 @@ impl Converter {
         Self { tx }
     }
 
-    pub async fn convert(&self, req: ConvertRequest) -> ConvertResponse {
+    pub async fn convert(&self, req: ConvertRequest, session: Arc<Session>) -> ConvertResponse {
         let id = req.id;
         let (resp_tx, resp_rx) = oneshot::channel();
-        if self.tx.send((req, resp_tx)).is_err() {
+        if self.tx.send((req, session, resp_tx)).is_err() {
             return ConvertResponse::fatal(id, "converter worker has died");
         }
         match resp_rx.await {
@@ -51,52 +57,84 @@ fn worker_main(rx: std_mpsc::Receiver<Job>) {
     // worker thread doesn't need to do anything here. The previous
     // `init_logger()` call always failed at this point because the global
     // logger was already taken, leaving LOG_BUFFER unwired.
-    while let Ok((mut req, mut reply)) = rx.recv() {
+    while let Ok((mut req, mut session, mut reply)) = rx.recv() {
         // Skip-stale-on-pull: drain anything already queued behind us and
         // process only the freshest request. Older ones get a cheap
         // "superseded" reply so the WS handler's await still completes;
         // the frontend filters those out by id and status.
         loop {
             match rx.try_recv() {
-                Ok((newer_req, newer_reply)) => {
+                Ok((newer_req, newer_session, newer_reply)) => {
                     let stale_id = req.id;
+                    let stale_version = req.version;
                     let _ = reply.send(ConvertResponse {
                         id: stale_id,
                         result: String::new(),
                         status: "superseded".into(),
                         status_code: 0,
+                        version: stale_version,
                         log: String::new(),
                         timings: None,
                     });
                     req = newer_req;
+                    session = newer_session;
                     reply = newer_reply;
                 }
                 Err(_) => break,
             }
         }
         let id = req.id;
-        let resp =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| convert_one(req)))
-                .unwrap_or_else(|_| {
-                    error!("latexml-oxide worker panicked while converting id={id}");
-                    ConvertResponse::fatal(id, "internal conversion failure (panic)")
-                });
+        let resp = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            convert_one(req, &session)
+        }))
+        .unwrap_or_else(|_| {
+            error!("latexml-oxide worker panicked while converting id={id}");
+            ConvertResponse::fatal(id, "internal conversion failure (panic)")
+        });
         let _ = reply.send(resp);
     }
 }
 
-fn convert_one(req: ConvertRequest) -> ConvertResponse {
+fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
     let id = req.id;
+    let version = req.version;
     let whatsin = match req.profile.as_deref().unwrap_or("fragment") {
         "math" => DataSize::Math,
         "document" => DataSize::Document,
-        _ => DataSize::Fragment, // "fragment" and any unknown profile
+        _ => DataSize::Fragment,
+    };
+
+    // Resolve the active file inside the session dir. A traversal here
+    // would be a client bug, not an attacker — the WS upgrade already
+    // bound this connection to the session — but the chokepoint
+    // applies uniformly anyway.
+    let abs_path = match session.resolve(&req.active_file) {
+        Ok(p) => p,
+        Err(_) => {
+            return ConvertResponse::fatal(
+                id,
+                format!("invalid active_file: {}", req.active_file),
+            );
+        }
+    };
+    let tex = match std::fs::read_to_string(&abs_path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && !session.dir.exists() => {
+            // The session was GC'd under us. Tell the client to reopen
+            // the slot rather than waste a fatal.
+            return ConvertResponse::session_expired(id);
+        }
+        Err(e) => {
+            return ConvertResponse::fatal(
+                id,
+                format!("read active_file {}: {e}", req.active_file),
+            );
+        }
     };
 
     let opts = OxideConfig {
         // verbosity 1 = "normal" — emits Info!() messages so the per-request
         // LOG_BUFFER has something for the UI's status-toggle to display.
-        // Bumped from -1 (silent) which intentionally suppressed all output.
         verbosity: 1,
         format: OutputFormat::HTML5,
         whatsin: whatsin.clone(),
@@ -104,14 +142,17 @@ fn convert_one(req: ConvertRequest) -> ConvertResponse {
         preamble: req.preamble.clone(),
         postamble: None,
         mode: None,
-        bindings_dispatch: None, // converter overrides with latexml_package::dispatch
+        bindings_dispatch: None,
         extra_bindings_dispatch: None,
         preload: if req.preload.is_empty() {
             None
         } else {
             Some(req.preload.clone())
         },
-        search_paths: None,
+        // The headline of Phase 0: search_paths set to the session dir
+        // is what makes `\input{chapter1}` and `\includegraphics{fig}`
+        // resolve to files the user has uploaded.
+        search_paths: Some(vec![session.dir.to_string_lossy().into_owned()]),
         include_comments: Some(false),
         nomathparse: None,
     };
@@ -122,10 +163,7 @@ fn convert_one(req: ConvertRequest) -> ConvertResponse {
     let dt_build = t0.elapsed();
 
     let t1 = Instant::now();
-    // `convert` consumes the converter; it lazily initialises the session
-    // (TeX.pool + bindings) on first use, applies the configured preamble /
-    // postamble around the source, then digests + builds the document.
-    let resp = converter.convert(format!("literal:{}", req.tex));
+    let resp = converter.convert(format!("literal:{}", tex));
     let dt_convert = t1.elapsed();
 
     let xml = match resp.result {
@@ -136,22 +174,26 @@ fn convert_one(req: ConvertRequest) -> ConvertResponse {
                 result: String::new(),
                 status: resp.status,
                 status_code: resp.status_code as i32,
+                version,
                 log: resp.log,
                 timings: None,
             };
         }
     };
 
-    // Post-processing: emit Presentation MathML and run the bundled HTML5
-    // XSLT so the result is a real HTML5 document the browser can morph
-    // into the preview pane. The stylesheets are `include_str!`d into
-    // `latexml_post`, so the path string is just a key, not a real file.
     let post_opts = PostOptions {
         pmml: true,
         cmml: false,
         keep_xmath: false,
         stylesheet: Some("resources/XSLT/LaTeXML-html5.xsl"),
         destination: None,
+        // We deliberately leave `source_directory` unset so the
+        // engine emits absolute paths in `<img src=...>`. Our
+        // `rewrite_session_paths` step below maps those absolute
+        // paths to `/api/session/{id}/files/<rel>`. Setting
+        // `source_directory` would make the engine emit relative
+        // paths (`<img src="fig.png">`) which the browser would
+        // resolve against `/editor` — wrong for our routing.
         source_directory: None,
         nodefaultresources: true,
         css_files: &[],
@@ -166,8 +208,16 @@ fn convert_one(req: ConvertRequest) -> ConvertResponse {
         graphics_svg_threshold_kb: 0,
     };
     let t2 = Instant::now();
-    let html = run_post_processing(&xml, &post_opts);
+    let html_raw = run_post_processing(&xml, &post_opts);
     let dt_post = t2.elapsed();
+
+    // Phase 0 finding: the post-processed HTML carries `<img src=...>`
+    // with the absolute path `<session_dir>/<rel>`. Two problems:
+    // (1) the browser can't fetch a server-side fs path; (2) the path
+    // leaks the session dir layout into the page. Rewrite to the
+    // file-route URL the browser *can* fetch.
+    let html = rewrite_session_paths(&html_raw, &session.dir, &session.id.to_string());
+
     let dt_total = t_total.elapsed();
     eprintln!(
         "[convert id={}] build={} µs  convert={} ms  post={} ms  total={} ms  tex={} B  out={} B",
@@ -176,7 +226,7 @@ fn convert_one(req: ConvertRequest) -> ConvertResponse {
         dt_convert.as_millis(),
         dt_post.as_millis(),
         dt_total.as_millis(),
-        req.tex.len(),
+        tex.len(),
         html.len(),
     );
 
@@ -185,6 +235,7 @@ fn convert_one(req: ConvertRequest) -> ConvertResponse {
         result: html,
         status: resp.status,
         status_code: resp.status_code as i32,
+        version,
         log: resp.log,
         timings: Some(Timings {
             build_us: dt_build.as_micros() as u64,
@@ -195,32 +246,119 @@ fn convert_one(req: ConvertRequest) -> ConvertResponse {
     }
 }
 
+/// Rewrite any `src="..."` or `href="..."` whose path lives under
+/// `session_dir` to `/api/session/{session_id}/files/<relative>`. The
+/// search runs over the raw HTML string; we don't need a real parser
+/// because the post-processor's output uses double-quoted attributes
+/// and absolute file paths only when the engine resolved a graphic
+/// (or similar) under our search_paths.
+fn rewrite_session_paths(html: &str, session_dir: &std::path::Path, session_id: &str) -> String {
+    let prefix = match session_dir.to_str() {
+        Some(s) => s,
+        None => return html.to_string(),
+    };
+    // For each occurrence of the absolute prefix in a quoted attribute,
+    // replace with the file-route URL. Reuse a single allocation; the
+    // happy path doesn't trigger any rewrite at all.
+    if !html.contains(prefix) {
+        return html.to_string();
+    }
+
+    let mut out = String::with_capacity(html.len());
+    let mut cursor = 0;
+    let pattern = format!("\"{prefix}");
+    while let Some(off) = html[cursor..].find(&pattern) {
+        let abs_start = cursor + off + 1; // skip the `"`
+        out.push_str(&html[cursor..abs_start]);
+        let after_prefix = abs_start + prefix.len();
+        // Find the closing quote.
+        let close = match html[after_prefix..].find('"') {
+            Some(i) => after_prefix + i,
+            None => {
+                out.push_str(&html[abs_start..]);
+                cursor = html.len();
+                break;
+            }
+        };
+        let rel_with_lead = &html[after_prefix..close];
+        let rel = rel_with_lead.trim_start_matches('/');
+        out.push_str(&format!("/api/session/{session_id}/files/{rel}"));
+        cursor = close;
+    }
+    out.push_str(&html[cursor..]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, AtomicU64};
+
+    use crate::session::{SessionId, Slot, Token, UserId};
+
+    fn make_test_session(dir: PathBuf) -> Arc<Session> {
+        Arc::new(Session {
+            id:            SessionId::new(),
+            user_id:       UserId::new(),
+            slot:          Slot::Blank,
+            dir,
+            disk_token:    Token::new(),
+            last_activity: AtomicU64::new(0),
+            bytes_used:    AtomicU64::new(0),
+            file_count:    AtomicU32::new(0),
+            version:       AtomicU64::new(0),
+        })
+    }
+
+    #[test]
+    fn rewrite_substitutes_session_paths() {
+        let html = r#"<img src="/tmp/sess123/fig.png"> and <a href="/tmp/sess123/sub/a.tex">a</a>"#;
+        let out = rewrite_session_paths(html, std::path::Path::new("/tmp/sess123"), "SID");
+        assert!(out.contains("/api/session/SID/files/fig.png"));
+        assert!(out.contains("/api/session/SID/files/sub/a.tex"));
+        assert!(!out.contains("/tmp/sess123"));
+    }
+
+    #[test]
+    fn rewrite_leaves_unrelated_paths_alone() {
+        let html = r#"<img src="data:image/png;base64,iVBOR"> <img src="/elsewhere/x.png">"#;
+        let out = rewrite_session_paths(html, std::path::Path::new("/tmp/sess123"), "SID");
+        assert_eq!(out, html);
+    }
 
     #[tokio::test]
     async fn round_trips_a_math_fragment() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = make_test_session(dir.path().to_path_buf());
+        std::fs::write(dir.path().join("main.tex"), r"\(x^2 + y^2 = z^2\)").unwrap();
+
         let c = Converter::new(1);
         let resp = c
-            .convert(ConvertRequest {
-                id: 7,
-                tex: "\\(x^2 + y^2 = z^2\\)".into(),
-                preamble: None,
-                profile: Some("fragment".into()),
-                format: Some("html5".into()),
-                preload: vec![],
-            })
+            .convert(
+                ConvertRequest {
+                    id: 7,
+                    active_file: "main.tex".into(),
+                    version: 1,
+                    preamble: None,
+                    profile: Some("fragment".into()),
+                    format: Some("html5".into()),
+                    preload: vec![],
+                },
+                session,
+            )
             .await;
         assert_eq!(resp.id, 7);
+        assert_eq!(resp.version, 1);
         assert_eq!(
             resp.status_code, 0,
-            "conversion failed (status={:?}, log={:?})", resp.status, resp.log
+            "conversion failed (status={:?}, log={:?})",
+            resp.status, resp.log
         );
         assert!(
             resp.result.contains("<math"),
-            "expected MathML in result, got: {}", resp.result
+            "expected MathML in result, got: {}",
+            resp.result
         );
     }
 
@@ -260,24 +398,30 @@ mod tests {
             ),
         ];
 
+        let dir = tempfile::tempdir().unwrap();
+        let session = make_test_session(dir.path().to_path_buf());
+
         let t_boot = Instant::now();
         let c = Converter::new(1);
-        eprintln!(
-            "[boot] worker spawn = {} µs",
-            t_boot.elapsed().as_micros()
-        );
+        eprintln!("[boot] worker spawn = {} µs", t_boot.elapsed().as_micros());
 
         for (i, (label, tex)) in inputs.iter().enumerate() {
+            let path = format!("doc{i}.tex");
+            std::fs::write(dir.path().join(&path), tex).unwrap();
             let t = Instant::now();
             let resp = c
-                .convert(ConvertRequest {
-                    id: i as u64,
-                    tex: (*tex).into(),
-                    preamble: None,
-                    profile: Some("fragment".into()),
-                    format: Some("html5".into()),
-                    preload: preload.clone(),
-                })
+                .convert(
+                    ConvertRequest {
+                        id: i as u64,
+                        active_file: path,
+                        version: i as u64,
+                        preamble: None,
+                        profile: Some("fragment".into()),
+                        format: Some("html5".into()),
+                        preload: preload.clone(),
+                    },
+                    session.clone(),
+                )
                 .await;
             let dt = t.elapsed();
             eprintln!(
@@ -290,5 +434,7 @@ mod tests {
                 resp.result.len()
             );
         }
+
+        let _ = Token::new(); // keep `Token` referenced
     }
 }
