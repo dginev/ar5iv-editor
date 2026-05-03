@@ -1,6 +1,10 @@
 export interface ConvertRequest {
   id: number;
-  tex: string;
+  /** Path of the file to convert, relative to the active session. */
+  active_file: string;
+  /** Session `version` counter at request time. Server echoes; client
+   *  uses to discard responses that race a still-pending write. */
+  version: number;
   preamble?: string;
   profile?: string;
   format?: string;
@@ -19,6 +23,8 @@ export interface ConvertResponse {
   result: string;
   status: string;
   status_code: number;
+  /** Echo of the request's `version`. */
+  version: number;
   log: string;
   timings?: Timings;
 }
