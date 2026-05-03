@@ -17,7 +17,11 @@
     "allowImportingTsExtensions": false,
     "resolveJsonModule": true,
     "useDefineForClassFields": true,
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@examples/*": ["../examples/*"]
+    }
   },
   "include": ["src/**/*.ts", "vite.config.ts"]
 }

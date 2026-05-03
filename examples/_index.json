@@ -1,0 +1,21 @@
+{
+  "examples": [
+    { "name": "Equations", "slug": "equations", "entry": "main.tex" },
+    { "name": "Tables", "slug": "tables", "entry": "main.tex" },
+    { "name": "Narrative", "slug": "narrative", "entry": "main.tex" },
+    { "name": "Babel", "slug": "babel", "entry": "main.tex" },
+    { "name": "Unicode", "slug": "unicode", "entry": "main.tex" },
+    { "name": "Color", "slug": "color", "entry": "main.tex" },
+    { "name": "PSTricks Graphics", "slug": "pstricks-graphics", "entry": "main.tex" },
+    { "name": "Wiki Syntax", "slug": "wiki-syntax", "entry": "main.tex" },
+    { "name": "Boxes", "slug": "boxes", "entry": "main.tex" },
+    { "name": "Obfuscated", "slug": "obfuscated", "entry": "main.tex" },
+    { "name": "Turing Machine", "slug": "turing-machine", "entry": "main.tex" },
+    { "name": "Tikz Basic", "slug": "tikz-basic", "entry": "main.tex" },
+    { "name": "Tikz AC Voltage", "slug": "tikz-ac-voltage", "entry": "main.tex" },
+    { "name": "Tikz Rotated Triangle", "slug": "tikz-rotated-triangle", "entry": "main.tex" },
+    { "name": "Calculus", "slug": "calculus", "entry": "main.tex" },
+    { "name": "PlanetMath", "slug": "planetmath", "entry": "main.tex" },
+    { "name": "arXiv: 1709.07020", "slug": "arxiv", "entry": "full_article.tex", "archive": "1709.07020v1.tar.gz" }
+  ]
+}
