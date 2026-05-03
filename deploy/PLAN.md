@@ -40,10 +40,18 @@ IMAGE="$IMAGE" deploy/build-and-push.sh --push
 The first build is ~5–10 min (Rust release build dominates).
 Subsequent builds reuse layers and are much faster.
 
-After the push, mark the package public on ghcr.io if you don't
-want to log in on the Vultr box too: <https://github.com/USER>?tab=packages
-→ click `ar5iv-editor` → "Package settings" → "Change visibility"
-→ Public. Otherwise, plan on `docker login` on the Vultr box too.
+**Keep the package private.** ghcr.io packages default to private
+on first push, which is what we want — the image is a binary
+build of latexml-oxide (whose source we treat as private). The
+binary itself doesn't include the source (multi-stage Dockerfile
+discards builder + frontend stages), but binaries are derivative
+works of their source, so we don't publish them where anyone can
+pull. Verify on first push: <https://github.com/USER>?tab=packages
+→ click `ar5iv-editor` → "Package settings" → confirm
+"Visibility" is **Private**.
+
+The Vultr box pulls via `docker login ghcr.io` with the same PAT
+you used here — Step 4 sets that up.
 
 ---
 
@@ -92,8 +100,10 @@ git clone --filter=blob:none --no-checkout \
 git sparse-checkout set deploy
 git checkout
 
-# If your image is private, log in to ghcr.io.
-# echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_USER" --password-stdin
+# Image is private. Log in to ghcr.io with a PAT that has
+# `read:packages` scope (a shorter-lived token than the one your
+# laptop uses to push is fine — read-only on this box).
+echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_USER" --password-stdin
 
 # Mint a long-lived ed25519 private key for Anubis cookie signing.
 cat > deploy/.env <<EOF

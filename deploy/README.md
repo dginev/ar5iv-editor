@@ -21,8 +21,18 @@ checkouts:
 ```
 ~/git/
 ├── ar5iv-editor/      # this repo
-└── latexml-oxide/     # https://github.com/dginev/latexml-oxide
+└── latexml-oxide/     # https://github.com/dginev/latexml-oxide  (private)
 ```
+
+The latexml-oxide source is treated as **private**. The Dockerfile
+is multi-stage so the published image contains only the compiled
+binary and the frontend bundle — the latexml-oxide source is in
+the throwaway `builder` stage and never ends up in the runtime
+layers that `docker push` sends. To preserve that posture, also
+keep the **ghcr.io package private** (the default for first-push
+on ghcr.io); the deploy box authenticates with a read-scoped PAT.
+See `cloud-demo.md` § "What ships, what doesn't" for the layer
+breakdown.
 
 ## Quick start
 

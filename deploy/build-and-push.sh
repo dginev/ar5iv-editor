@@ -17,6 +17,15 @@
 #
 # Override IMAGE / LATEXML_PATH via env if your checkouts live
 # somewhere other than the defaults.
+#
+# The published image contains only the compiled binary and the
+# frontend bundle — the multi-stage Dockerfile discards the
+# latexml-oxide source (and the Rust / npm build trees) before
+# the layers that `docker push` sends. We treat latexml-oxide as
+# private, so keep the ghcr.io package **private** too. ghcr.io
+# defaults to private on first push; on subsequent pushes the
+# visibility doesn't change. Don't flip it to public without
+# revisiting the latexml-oxide license posture.
 
 set -euo pipefail
 
