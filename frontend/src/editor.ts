@@ -52,6 +52,10 @@ export interface EditorHandle {
   /** Drop a buffer's state. If it was active, the next `openBuffer`
    *  call decides what to show. */
   closeBuffer(path: string): void;
+  /** Drop every buffer. Used on session-swap so the editor doesn't
+   *  reuse a buffer keyed by the same path under a different
+   *  session (whose disk contents differ). */
+  closeAllBuffers(): void;
   /** The path of the currently-displayed buffer, or `null` if none. */
   getActivePath(): string | null;
   /** Replace the contents of the active buffer (e.g., on
@@ -158,6 +162,10 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
     closeBuffer(path) {
       buffers.delete(path);
       if (active === path) active = null;
+    },
+    closeAllBuffers() {
+      buffers.clear();
+      active = null;
     },
     getActivePath() {
       return active;

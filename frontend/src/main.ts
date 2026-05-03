@@ -588,6 +588,11 @@ async function main(): Promise<void> {
   }
 
   async function handleSessionSwap(env: SessionEnvelope): Promise<void> {
+    // The new session has its own filesystem; any cached buffers
+    // from the previous one are stale (same path → different bytes).
+    // Drop them all so `setActiveFile` is forced to GET fresh
+    // content. See editor.ts `closeAllBuffers`.
+    editor.closeAllBuffers();
     activePath = env.entry || "main.tex";
     try {
       await setActiveFile(activePath);
