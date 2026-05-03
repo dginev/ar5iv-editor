@@ -892,7 +892,83 @@ phase can wire its UI to real, tested endpoints.)
   pass `Upgrade: websocket`; trivially true for Anubis but verify).
 - Document in `README.md`.
 
-### Phase 8 — Tests + docs (½ d)
+### Phase 8a — Dockerization + cloud demo deploy (¾ d)
+
+The plan in v1.2 already calls for an Anubis-fronted deploy
+(Phase 7); this phase is the *concrete, demoable* shape of that.
+Goal: a single image we can push to ghcr.io and pull on a €5/mo
+box, with full TLS, in under 10 minutes.
+
+Constraints:
+
+- **latexml-oxide is single-threaded** — adding vCPU past 1 is
+  wasted on the engine. The only CPU dimension that matters for
+  warm conversion latency is single-core clock × IPC. That rules
+  out the usual "burstable t3 / shared vCPU" tiers everyone
+  defaults to: those throttle exactly when the engine wants to
+  run.
+- The image needs TeX Live's `kpsewhich` for the engine's
+  package-resolution fallback. Slim runtime image, but not
+  scratch.
+- Anubis fronts the binary; no other middleware.
+
+Recommendation: **Hetzner Cloud CCX13** (~€13.10/mo / ~$14.50,
+2 *dedicated* AMD EPYC 7763 vCPUs, 8 GB RAM, 80 GB NVMe, 20 TB
+egress). The dedicated-cores tier is the value sweet spot once the
+budget allows it — no neighbour contention on conversion, which is
+the single biggest source of warm-latency jitter on the burstable
+tiers. Fly.io \`performance-2x\` (~$11/mo + RAM) is the
+deploy-from-\`flyctl\` alternative; pick it if Git-push DX matters
+more than absolute consistency.
+
+Why 2 vCPUs matter even with a single-threaded engine: one core
+stays pinned to the latexml-oxide worker, the other absorbs
+Anubis (JS challenge verification), Caddy (TLS termination),
+Axum/tokio runtime, WebSocket multiplexing, and OS overhead. On
+a single-core box those compete with the engine and surface as
+warm-conversion jitter. On 2 dedicated cores the worker thread
+runs uncontested.
+
+CPX11 (€4.51/mo, shared vCPUs) remains the rock-bottom fallback
+if cost is the only axis, but expect ~2× the warm-latency
+variance and occasional spikes when noisy neighbours are heavy.
+
+Work items:
+
+- Verify the existing \`deploy/Dockerfile\` actually builds end-to-end.
+  It currently assumes \`latexml-oxide\` lives in the docker-build
+  context next to \`ar5iv-editor\`; document the symlink trick or
+  switch to a multi-context build (\`docker buildx build\`'s
+  \`--build-context\`).
+- Add a small \`deploy/build-and-push.sh\` that does the
+  symlink + build + push to ghcr.io in one shot.
+- Add \`deploy/cloud-demo.md\` with a step-by-step Hetzner CCX13
+  recipe (provision → SSH → docker → pull → up). Include a
+  one-shot Caddyfile for TLS, the demo-tightened quota env vars
+  (\`QUOTA_PER_IP=4\`, \`SESSION_IDLE_SECS=300\`), and the
+  recommended tmpfs size (1 GB on CCX13's 8 GB RAM is
+  comfortable; drop to 512 MB if running on the smaller CPX11
+  fallback). Note CPU-pinning via \`cpuset\` so the convert
+  worker container claims one core uncontested.
+- Add a \`fly.toml\` for the Fly.io path so the alternate recipe
+  is one \`flyctl deploy\` away.
+- "CPU sanity-check" snippet that runs the existing
+  \`measure_pipeline\` ignored-test on the candidate box and
+  bails if warm conversions land >150 ms (a sign of throttling or
+  slower silicon than advertised).
+- README cross-link: bump the existing \`deploy/README.md\` to
+  point at the new cloud-demo guide.
+
+Out of scope:
+
+- Auto-scaling. Horizontal scaling means more containers, not
+  more cores; the engine still serialises through one thread per
+  process. If demand grows past a single CPX11 we revisit
+  per-container pinning, not autoscale groups.
+- Kubernetes. Too heavy for a demo.
+- Managed databases / queues. Sessions are tmpfs-only.
+
+### Phase 8b — Tests + docs (½ d)
 
 - Backend: route-level tests for upload limits, path traversal, GC,
   session-expiry behaviour, soft-cap behaviour, ZIP defences.
@@ -961,8 +1037,9 @@ No new crates. `ar5iv-editor-protocol` gains:
 | Phase 5 file panel UI + uploads                           | 1.25 d   |
 | Phase 6 editor multi-buffer + bootstrap + auto-convert    | 1.0 d    |
 | Phase 7 Anubis integration                                | 0.5 d    |
-| Phase 8 tests + docs                                      | 0.5 d    |
-| **Total**                                                 | **7.25 d** |
+| Phase 8a Dockerization + cloud demo deploy                | 0.75 d   |
+| Phase 8b tests + docs                                     | 0.5 d    |
+| **Total**                                                 | **8.0 d**|
 
 ~7 working days for a v1.2 that feels Overleaf-shaped, has folder/ZIP
 upload + export, gates abuse with Anubis, and keeps the headline
