@@ -116,6 +116,7 @@ dependencies = [
  "log",
  "num_cpus",
  "rand 0.9.4",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

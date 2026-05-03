@@ -59,6 +59,7 @@ zip = { version = "5", default-features = false, features = ["deflate"] }
 flate2 = "1"
 tar = "0.4"
 sha2 = "0.10"
+regex = "1"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"
