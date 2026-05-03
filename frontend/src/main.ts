@@ -137,6 +137,24 @@ function bootExamples(view: { setSource: (s: string) => void }): void {
   });
 }
 
+function bootLogToggle(): void {
+  const status = document.getElementById("status");
+  if (!status) return;
+  status.title = "Click to toggle the full conversion log";
+  status.addEventListener("click", () => {
+    const preview = document.getElementById("preview");
+    const log = document.getElementById("log");
+    if (!preview || !log) return;
+    if (log.hidden) {
+      preview.hidden = true;
+      log.hidden = false;
+    } else {
+      log.hidden = true;
+      preview.hidden = false;
+    }
+  });
+}
+
 function main(): void {
   const initialEditorTheme = chromeToEditor(readChromeTheme());
   setPreviewTheme(initialEditorTheme);
@@ -146,6 +164,7 @@ function main(): void {
 
   const editor = createEditor(host, initialEditorTheme);
   bootExamples(editor);
+  bootLogToggle();
 
   // The chrome theme is owned by the inline script in base.html; listen for
   // its change event and propagate to the editor and preview only.

@@ -2,11 +2,10 @@ use ar5iv_editor_protocol::{ConvertRequest, ConvertResponse, Timings};
 use latexml::converter::Converter as OxideConverter;
 use latexml::post::{PostOptions, run_post_processing};
 use latexml_core::common::{Config as OxideConfig, DataSize, OutputFormat};
-use std::sync::OnceLock;
 use std::sync::mpsc as std_mpsc;
 use std::time::Instant;
 use tokio::sync::oneshot;
-use tracing::{error, warn};
+use tracing::error;
 
 type Job = (ConvertRequest, oneshot::Sender<ConvertResponse>);
 
@@ -48,7 +47,10 @@ impl Converter {
 }
 
 fn worker_main(rx: std_mpsc::Receiver<Job>) {
-    init_logger();
+    // Logger is installed in `main.rs` before tracing-subscriber, so the
+    // worker thread doesn't need to do anything here. The previous
+    // `init_logger()` call always failed at this point because the global
+    // logger was already taken, leaving LOG_BUFFER unwired.
     while let Ok((mut req, mut reply)) = rx.recv() {
         // Skip-stale-on-pull: drain anything already queued behind us and
         // process only the freshest request. Older ones get a cheap
@@ -83,17 +85,6 @@ fn worker_main(rx: std_mpsc::Receiver<Job>) {
     }
 }
 
-fn init_logger() {
-    static ONCE: OnceLock<()> = OnceLock::new();
-    ONCE.get_or_init(|| {
-        // latexml-oxide has its own `log`-crate logger; install at Warn so
-        // stderr stays quiet under tracing-subscriber.
-        if let Err(e) = latexml_core::util::logger::init(log::LevelFilter::Warn) {
-            warn!(error = %e, "latexml-oxide logger init failed");
-        }
-    });
-}
-
 fn convert_one(req: ConvertRequest) -> ConvertResponse {
     let id = req.id;
     let whatsin = match req.profile.as_deref().unwrap_or("fragment") {
@@ -103,7 +94,10 @@ fn convert_one(req: ConvertRequest) -> ConvertResponse {
     };
 
     let opts = OxideConfig {
-        verbosity: -1,
+        // verbosity 1 = "normal" — emits Info!() messages so the per-request
+        // LOG_BUFFER has something for the UI's status-toggle to display.
+        // Bumped from -1 (silent) which intentionally suppressed all output.
+        verbosity: 1,
         format: OutputFormat::HTML5,
         whatsin: whatsin.clone(),
         whatsout: whatsin,

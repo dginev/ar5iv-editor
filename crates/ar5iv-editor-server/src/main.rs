@@ -7,6 +7,15 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Install latexml-oxide's logger FIRST, before tracing-subscriber, so it
+    // owns the global `log` slot. That logger is the one that captures into
+    // the per-request LOG_BUFFER consumed by `bind_log` / `flush_log`; if
+    // anything else (e.g. tracing-log) takes the slot first, every per-
+    // request log toggle in the UI would show empty content.
+    if let Err(e) = latexml_core::util::logger::init(log::LevelFilter::Info) {
+        eprintln!("warning: latexml-oxide logger init failed: {e}");
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
