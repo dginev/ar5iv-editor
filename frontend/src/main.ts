@@ -415,11 +415,29 @@ async function main(): Promise<void> {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
+  /** Does this diagnostic target the active buffer? The engine
+   *  emits the source as the file stem (e.g. `"full_article"` for
+   *  `full_article.tex`), or as `"Anonymous String"` for literal
+   *  source. Try several normal forms. */
+  function matchesActiveBuffer(source: string | undefined): boolean {
+    if (!source) return false;
+    if (source === "Anonymous String") return true;
+    if (source === activePath) return true;
+    // Strip extension (`full_article.tex` → `full_article`).
+    const dot = activePath.lastIndexOf(".");
+    const stem = dot >= 0 ? activePath.slice(0, dot) : activePath;
+    if (source === stem) return true;
+    // Strip any directory prefix on top of that — engine usually
+    // reports just the stem name.
+    const slash = stem.lastIndexOf("/");
+    const baseStem = slash >= 0 ? stem.slice(slash + 1) : stem;
+    if (source === baseStem) return true;
+    return false;
+  }
+
   /** Split engine diagnostics into editor-anchored (a `from_line` is
    *  set AND the diagnostic targets the active buffer) and
-   *  unanchored (everything else). The active-buffer match accepts
-   *  `Anonymous String` (which the literal-source convert path
-   *  always reports) as a synonym for the active file. */
+   *  unanchored (everything else). */
   function applyDiagnostics(diags: Diagnostic[]): void {
     const anchored: Array<{
       severity: "info" | "warning" | "error";
@@ -431,9 +449,13 @@ async function main(): Promise<void> {
     }> = [];
     const unanchored: Diagnostic[] = [];
     for (const d of diags) {
-      const targetsActive =
-        d.source === "Anonymous String" || d.source === activePath;
-      if (d.from_line && targetsActive) {
+      if (d.severity === "info") {
+        // Info-level entries ("Conversion complete: …",
+        // "strings_allocated", etc.) are noisy and never actionable.
+        // Drop them from both buckets.
+        continue;
+      }
+      if (d.from_line && matchesActiveBuffer(d.source)) {
         anchored.push({
           severity: cmSeverity(d.severity),
           message: `${d.category}: ${d.message.split("\n")[0]}`,
@@ -442,10 +464,7 @@ async function main(): Promise<void> {
           toLine: d.to_line,
           toCol: d.to_col,
         });
-      } else if (d.severity !== "info") {
-        // Don't surface raw info messages as banner badges; they're
-        // noisy ("strings_allocated", "Conversion complete: …") and
-        // not actionable.
+      } else {
         unanchored.push(d);
       }
     }

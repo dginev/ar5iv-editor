@@ -273,7 +273,7 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
 .ar5iv-editor-shell {
   display: grid;
   grid-template-columns:
-    var(--w-files, 14rem)
+    var(--w-files, 16rem)
     4px
     var(--w-source, 32rem)
     4px
@@ -343,19 +343,32 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
   font-size: 0.72rem;
   color: var(--ink-soft);
 }
-.pane-actions { display: inline-flex; gap: 0.25rem; }
+/* Header actions follow the same terminal-strip aesthetic as the
+   timings panel and the latexml-oxide version marker on the right:
+   monospace, small, muted-by-default, accent on hover. No emoji,
+   no boxed-button affordance — they read as inline labels.
+   Sized to harmonise with `.preview-version` (0.72rem mono).
+   Tight gap so the five labels fit a 14 rem panel even with the
+   tightest action wording. */
+.pane-actions { display: inline-flex; gap: 0.65rem; align-items: baseline; flex: 1; justify-content: flex-end; }
 .pane-actions button {
   background: transparent;
-  border: 1px solid transparent;
-  color: var(--ink-soft);
-  padding: 0.1rem 0.4rem;
-  font-size: 0.85rem;
-  border-radius: 3px;
+  border: none;
+  color: var(--ink-muted);
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  white-space: nowrap;
 }
 .pane-actions button:not(:disabled):hover {
-  background: var(--bg-elev);
-  border-color: var(--rule);
   color: var(--accent);
+  text-decoration: underline;
+}
+.pane-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .file-tree {
   flex: 1;
@@ -389,37 +402,37 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
 .ftree-button {
   flex: 1;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 0.45rem;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 3px;
-  padding: 0.18rem 0.5rem;
+  border: none;
+  padding: 0.2rem 0.4rem;
   text-align: left;
   color: var(--ink-soft);
-  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.01em;
   cursor: pointer;
   min-width: 0;
 }
 .ftree-button:hover {
-  background: var(--bg-elev);
-  border-color: var(--rule-soft);
   color: var(--accent);
 }
+/* Active file row: tinted background, accent text, no bold —
+   keeps it readable in mono without making the row taller. */
 .ftree-row--active > .ftree-button {
   background: var(--accent-soft);
   color: var(--accent);
-  font-weight: 600;
 }
 .ftree-icon {
   flex: 0 0 auto;
-  font-size: 0.8em;
-  width: 1.1em;
+  width: 0.9em;
   text-align: center;
   color: var(--ink-muted);
-}
-.ftree-row--dir > .ftree-button > .ftree-icon {
   font-size: 0.7em;
+}
+.ftree-row--dir > .ftree-button:hover > .ftree-icon {
+  color: var(--accent);
 }
 .ftree-label {
   flex: 1 1 auto;
@@ -427,13 +440,16 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Per-row download link in the same mono-muted aesthetic as
+   the header actions; slides in only on hover or for the active row. */
 .ftree-kebab {
   flex: 0 0 auto;
   text-decoration: none;
   color: var(--ink-muted);
-  padding: 0.1rem 0.45rem;
-  border-radius: 3px;
-  font-size: 0.85rem;
+  padding: 0 0.3rem;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
   visibility: hidden;
 }
 .ftree-row:hover .ftree-kebab,
@@ -441,9 +457,8 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
   visibility: visible;
 }
 .ftree-kebab:hover {
-  background: var(--bg-elev);
   color: var(--accent);
-  text-decoration: none;
+  text-decoration: underline;
 }
 
 /* -------- binary-file metadata stub (replaces the editor when a

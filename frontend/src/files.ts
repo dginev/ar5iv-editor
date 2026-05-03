@@ -112,9 +112,12 @@ export class FilePanel {
 
       const icon = document.createElement("span");
       icon.className = "ftree-icon";
+      // Folders get a collapse-state arrow; files have no glyph —
+      // their filename + extension is the visual signal, in keeping
+      // with the terminal aesthetic of the timings strip.
       icon.textContent = n.isDir
         ? this.collapsed.has(n.path) ? "▶" : "▼"
-        : iconForExt(n.name);
+        : "";
       row.appendChild(icon);
 
       const label = document.createElement("span");
@@ -138,8 +141,8 @@ export class FilePanel {
         const kebab = document.createElement("a");
         kebab.className = "ftree-kebab";
         kebab.href = this.opts.session.fileUrl(n.path);
-        kebab.title = "Download";
-        kebab.textContent = "⬇";
+        kebab.title = "Download this file";
+        kebab.textContent = "dl";
         // Force download with a sensible filename.
         kebab.download = n.name;
         kebab.addEventListener("click", (e) => e.stopPropagation());
@@ -186,23 +189,26 @@ export class FilePanel {
   private renderActions(): void {
     this.opts.actionsEl.replaceChildren();
 
-    const newFileBtn = makeIconButton("+", "New file");
+    const newFileBtn = makeTextButton("new", "Create a new file");
     newFileBtn.addEventListener("click", () => void this.actionNewFile());
     this.opts.actionsEl.appendChild(newFileBtn);
 
-    const uploadFilesBtn = makeIconButton("↑", "Upload files");
+    const uploadFilesBtn = makeTextButton("upload", "Upload one or more files");
     uploadFilesBtn.addEventListener("click", () => this.triggerUpload(false, false));
     this.opts.actionsEl.appendChild(uploadFilesBtn);
 
-    const uploadFolderBtn = makeIconButton("📁", "Upload folder");
+    const uploadFolderBtn = makeTextButton("folder", "Upload a folder (preserves directory structure)");
     uploadFolderBtn.addEventListener("click", () => this.triggerUpload(true, false));
     this.opts.actionsEl.appendChild(uploadFolderBtn);
 
-    const importArchiveBtn = makeIconButton("📦", "Import archive (ZIP / tar.gz) as new project");
+    const importArchiveBtn = makeTextButton(
+      "import",
+      "Import a ZIP or tar.gz as a new project",
+    );
     importArchiveBtn.addEventListener("click", () => this.triggerUpload(false, true));
     this.opts.actionsEl.appendChild(importArchiveBtn);
 
-    const exportBtn = makeIconButton("⬇", "Download project as ZIP");
+    const exportBtn = makeTextButton("export", "Download project as ZIP");
     exportBtn.addEventListener("click", () => void this.actionExport());
     this.opts.actionsEl.appendChild(exportBtn);
   }
@@ -375,26 +381,12 @@ function buildTree(files: FileMeta[]): TreeNode[] {
   }
 }
 
-function makeIconButton(label: string, title: string): HTMLButtonElement {
+function makeTextButton(label: string, title: string): HTMLButtonElement {
   const b = document.createElement("button");
   b.type = "button";
   b.title = title;
   b.textContent = label;
   return b;
-}
-
-function iconForExt(name: string): string {
-  const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1).toLowerCase() : "";
-  switch (ext) {
-    case "tex": case "sty": case "cls": case "bib": case "bst": case "bbl":
-      return "📄";
-    case "png": case "jpg": case "jpeg": case "gif": case "svg":
-      return "🖼";
-    case "pdf":
-      return "📕";
-    default:
-      return "📄";
-  }
 }
 
 function isEditableExtension(path: string): boolean {

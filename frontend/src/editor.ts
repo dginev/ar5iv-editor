@@ -23,8 +23,9 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { githubLight } from "@uiw/codemirror-theme-github";
 import { latex } from "codemirror-lang-latex";
 import {
-  setDiagnostics,
   lintGutter,
+  linter,
+  setDiagnostics as setLintDiagnostics,
   type Diagnostic as CmDiagnostic,
 } from "@codemirror/lint";
 
@@ -96,6 +97,14 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
 
   const buildExtensions = (theme: EditorTheme): Extension[] => [
     lineNumbers(),
+    // Lint plumbing — diagnostics are pushed from outside (the
+    // convert engine) via `setDiagnostics` below. Passing `null`
+    // as the linter source pre-installs the lint state field at
+    // construction time. Without this, the first `setDiagnostics`
+    // dispatch only `appendConfig`s the field, and same-transaction
+    // effects aren't visible to a freshly-created field — so the
+    // first batch of markers silently disappears.
+    linter(null),
     lintGutter(),
     highlightSpecialChars(),
     history(),
@@ -103,7 +112,13 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
     highlightActiveLine(),
     bracketMatching(),
     indentOnInput(),
-    latex(),
+    // `enableLinting: false` — codemirror-lang-latex ships its own
+    // syntactic linter that runs on a 750ms timer and dispatches a
+    // canonical `setDiagnosticsEffect`, which silently clobbers any
+    // diagnostics we push from outside (i.e. from the convert
+    // engine). The engine is authoritative for our use case, so we
+    // turn the bundled linter off.
+    latex({ enableLinting: false }),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     themeCompartment.of(themeOf(theme)),
     keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
@@ -191,6 +206,11 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
       });
     },
     setDiagnostics(diags) {
+      // Build the CmDiagnostic[] payload from line/col anchors,
+      // then dispatch the lint extension's `setDiagnostics`
+      // transaction spec onto the view. That installs the lint
+      // state field on first use and updates the active buffer's
+      // markers on subsequent calls.
       const cm: CmDiagnostic[] = [];
       const doc = view.state.doc;
       for (const d of diags) {
@@ -205,8 +225,13 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
         if (d.toLine !== undefined) {
           const tln = Math.max(1, Math.min(d.toLine, doc.lines));
           const tline = doc.line(tln);
-          to = tline.from + Math.max(0, (d.toCol ?? line.length) - 1);
+          // Use the toCol if provided; otherwise fall back to end-
+          // of-line. Zero out the off-by-one and clamp.
+          const toColIdx =
+            d.toCol !== undefined ? Math.max(0, d.toCol - 1) : tline.length;
+          to = tline.from + toColIdx;
         } else if (d.fromCol !== undefined) {
+          // Single-position locator: highlight one character.
           to = Math.min(line.to, from + 1);
         } else {
           // No column info — mark the whole line.
@@ -215,6 +240,19 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
         }
         from = Math.max(line.from, Math.min(from, doc.length));
         to = Math.max(from, Math.min(to, doc.length));
+        // Lint markers with a zero-width range render no
+        // visible underline (CodeMirror skips them). Many engine
+        // diagnostics produce identical from/to columns (e.g. an
+        // undefined-macro error pointing at one cursor position);
+        // expand to the rest of the line so the user sees a
+        // visible marker.
+        if (to <= from) {
+          to = line.to;
+          if (to <= from) {
+            // Empty line — push to start of next line.
+            to = Math.min(doc.length, from + 1);
+          }
+        }
         cm.push({
           from,
           to,
@@ -222,7 +260,7 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
           message: d.message,
         });
       }
-      view.dispatch(setDiagnostics(view.state, cm));
+      view.dispatch(setLintDiagnostics(view.state, cm));
     },
   };
 }

@@ -37,7 +37,7 @@ function loadStored(): { files: number; source: number } {
   const f = parseFloat(localStorage.getItem(LS_FILES) ?? "");
   const s = parseFloat(localStorage.getItem(LS_SOURCE) ?? "");
   return {
-    files: Number.isFinite(f) ? f : 14,
+    files: Number.isFinite(f) ? f : 16,
     source: Number.isFinite(s) ? s : 32,
   };
 }
