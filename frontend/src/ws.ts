@@ -51,13 +51,29 @@ export interface ConvertClientOpts {
   onStatus?: (s: string) => void;
 }
 
-const RECONNECT_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000];
+// Exponential backoff starting at 1 second so a flaky network
+// doesn't beat the server with a reconnect storm. Doubles per
+// retry; once the last value is reached it stays there until a
+// stable connection resets the counter (see `STABLE_AFTER_MS`).
+const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 16_000, 30_000];
+
+// A connection only counts as "stable" — and only then resets the
+// backoff counter — after this long without dropping. Without this,
+// a flaky network where `onopen` is followed by `onclose` within
+// ~hundreds of ms would reset the backoff to 1 s every time and
+// hammer the server. Resetting only after stability ensures the
+// backoff progresses through the array even under churn.
+const STABLE_AFTER_MS = 30_000;
 
 export class ConvertClient {
   private ws: WebSocket | null = null;
   private retry = 0;
   private queue: string[] = [];
   private closed = false;
+  /** Timer scheduled on `onopen`; fires after `STABLE_AFTER_MS` and
+   *  resets `retry` to 0. Cleared if `onclose` fires before then,
+   *  so brief-open-then-drop does NOT reset the backoff. */
+  private stableTimer: number | null = null;
 
   constructor(private readonly url: string, private readonly opts: ConvertClientOpts) {
     this.connect();
@@ -83,9 +99,17 @@ export class ConvertClient {
     const ws = new WebSocket(this.url);
     this.ws = ws;
     ws.onopen = () => {
-      this.retry = 0;
       this.opts.onStatus?.("connected");
       while (this.queue.length > 0) ws.send(this.queue.shift()!);
+      // Don't reset `retry` immediately — wait until the connection
+      // has held for long enough to count as stable. Otherwise a
+      // network that flaps every few seconds would walk 1 s → reset
+      // → 1 s → reset → ... and never back off.
+      if (this.stableTimer !== null) window.clearTimeout(this.stableTimer);
+      this.stableTimer = window.setTimeout(() => {
+        this.retry = 0;
+        this.stableTimer = null;
+      }, STABLE_AFTER_MS);
     };
     ws.onmessage = (ev) => {
       try {
@@ -97,10 +121,18 @@ export class ConvertClient {
     };
     ws.onclose = () => {
       this.ws = null;
+      // Cancel the pending "promote to stable" timer — we never
+      // earned the reset.
+      if (this.stableTimer !== null) {
+        window.clearTimeout(this.stableTimer);
+        this.stableTimer = null;
+      }
       if (this.closed) return;
-      const delay = RECONNECT_DELAYS_MS[Math.min(this.retry, RECONNECT_DELAYS_MS.length - 1)]!;
+      const delay = RECONNECT_DELAYS_MS[
+        Math.min(this.retry, RECONNECT_DELAYS_MS.length - 1)
+      ]!;
       this.retry++;
-      this.opts.onStatus?.(`disconnected — retrying in ${delay}ms`);
+      this.opts.onStatus?.(`disconnected — retrying in ${delay / 1000}s`);
       window.setTimeout(() => this.connect(), delay);
     };
     ws.onerror = () => {

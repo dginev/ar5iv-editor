@@ -18,6 +18,11 @@ const MIN_FILES = 8;        // rem
 const MAX_FILES = 28;       // rem
 const MIN_SOURCE = 18;      // rem
 const KEY_STEP = 0.5;       // rem per Left/Right press
+/** The preview pane must always have at least this many rem visible
+ *  on the right. Without this, a stale `--w-source` in localStorage
+ *  (e.g. from a previous drag on a wider monitor) could push the
+ *  preview pane off-screen entirely. */
+const PREVIEW_RESERVE = 16; // rem
 
 function rootStyle(): CSSStyleDeclaration | null {
   const shell = document.querySelector<HTMLElement>(".ar5iv-editor-shell");
@@ -40,8 +45,18 @@ function loadStored(): { files: number; source: number } {
 function setColumns(filesRem: number, sourceRem: number): void {
   const style = rootStyle();
   if (!style) return;
+  const ppr = pxPerRem();
+  const viewportRem = window.innerWidth / ppr;
   const filesClamp = Math.max(MIN_FILES, Math.min(MAX_FILES, filesRem));
-  const sourceClamp = Math.max(MIN_SOURCE, sourceRem);
+  // Cap the source-pane width so the preview always has at least
+  // PREVIEW_RESERVE rem visible. Two 4-px resizers + a small slack
+  // round out the calc.
+  const resizersRem = (8 + 4) / ppr; // two resizers + small slack
+  const sourceMax = Math.max(
+    MIN_SOURCE,
+    viewportRem - filesClamp - resizersRem - PREVIEW_RESERVE,
+  );
+  const sourceClamp = Math.max(MIN_SOURCE, Math.min(sourceMax, sourceRem));
   style.setProperty("--w-files", `${filesClamp}rem`);
   style.setProperty("--w-source", `${sourceClamp}rem`);
 }
@@ -58,10 +73,22 @@ interface DragState {
 export function bootResizers(): void {
   const stored = loadStored();
   setColumns(stored.files, stored.source);
+  // Persist the *clamped* values immediately so a stale localStorage
+  // entry (e.g. saved on a wider monitor) gets healed in place. Without
+  // this, every page load would re-clamp from the same broken stored
+  // value.
+  persistFromLive();
 
   document
     .querySelectorAll<HTMLElement>(".ar5iv-editor-shell > .resizer")
     .forEach((handle) => wireOne(handle));
+
+  // Reclamp on window resize so a shrink doesn't leave the preview
+  // pushed off-screen. Cheap; no debounce needed.
+  window.addEventListener("resize", () => {
+    const stored = loadStored();
+    setColumns(stored.files, stored.source);
+  });
 }
 
 function wireOne(handle: HTMLElement): void {

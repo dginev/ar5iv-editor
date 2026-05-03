@@ -17,6 +17,15 @@
 #
 # Override IMAGE / LATEXML_PATH via env if your checkouts live
 # somewhere other than the defaults.
+#
+# The published image contains only the compiled binary and the
+# frontend bundle — the multi-stage Dockerfile discards the
+# latexml-oxide source (and the Rust / npm build trees) before
+# the layers that `docker push` sends. We treat latexml-oxide as
+# private, so keep the ghcr.io package **private** too. ghcr.io
+# defaults to private on first push; on subsequent pushes the
+# visibility doesn't change. Don't flip it to public without
+# revisiting the latexml-oxide license posture.
 
 set -euo pipefail
 
@@ -72,16 +81,35 @@ else
     cp -al "$LATEXML_PATH" "$CTX/latexml-oxide"
 fi
 
+# Capture the latexml-oxide commit identity so the binary can render
+# a "powered by latexml-oxide @<sha>" link in the preview header.
+# Pinned to the tip of `master` rather than the local checkout's HEAD
+# — the constants advertise "we built against latexml-oxide master
+# @<sha>" and the SHA needs to mean the same thing regardless of
+# which branch the build host happens to be on. Falls back to
+# "unknown" if the checkout doesn't have a `master` ref.
+LATEXML_OXIDE_REF="${LATEXML_OXIDE_REF:-master}"
+LATEXML_OXIDE_SHA=$(
+    git -C "$LATEXML_PATH" rev-parse --short "$LATEXML_OXIDE_REF" 2>/dev/null \
+        || echo "unknown"
+)
+LATEXML_OXIDE_DATE=$(
+    git -C "$LATEXML_PATH" log -1 --format=%cs "$LATEXML_OXIDE_REF" 2>/dev/null \
+        || echo "unknown"
+)
+
 echo
 echo "==> building $IMAGE"
 echo "    repo:          $REPO_ROOT"
-echo "    latexml-oxide: $LATEXML_PATH"
+echo "    latexml-oxide: $LATEXML_PATH ($LATEXML_OXIDE_SHA, $LATEXML_OXIDE_DATE)"
 echo "    context:       $CTX"
 echo
 
 docker build \
     -f "$REPO_ROOT/deploy/Dockerfile" \
     -t "$IMAGE" \
+    --build-arg "LATEXML_OXIDE_SHA=$LATEXML_OXIDE_SHA" \
+    --build-arg "LATEXML_OXIDE_DATE=$LATEXML_OXIDE_DATE" \
     "$CTX"
 
 if [[ "$PUSH" -eq 1 ]]; then

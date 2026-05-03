@@ -16,3 +16,10 @@ services:
   anubis:
     environment:
       USE_REMOTE_ADDRESS: "true"
+  ar5iv-editor:
+    # Expose the Axum binary directly on 3001 for local debugging
+    # (bypasses Anubis). Don't add this on a public-facing box —
+    # the editor surface is meant to be reachable only through
+    # Anubis, since Anubis is what gates abusive scrapers.
+    ports:
+      - "127.0.0.1:3001:3000"

@@ -101,7 +101,7 @@ fn worker_main(rx: std_mpsc::Receiver<Job>) {
 fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
     let id = req.id;
     let version = req.version;
-    let whatsin = match req.profile.as_deref().unwrap_or("fragment") {
+    let mut whatsin = match req.profile.as_deref().unwrap_or("fragment") {
         "math" => DataSize::Math,
         "document" => DataSize::Document,
         _ => DataSize::Fragment,
@@ -120,11 +120,14 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
             );
         }
     };
+    // We still read the file ourselves so we can return a sensible
+    // 410-equivalent if the session got GC'd under us. The engine
+    // also reads it via the path we pass to `converter.convert`
+    // below — this duplicate read is cheap (page cache) and gives
+    // us the bytes for log/length reporting.
     let tex = match std::fs::read_to_string(&abs_path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && !session.dir.exists() => {
-            // The session was GC'd under us. Tell the client to reopen
-            // the slot rather than waste a fatal.
             return ConvertResponse::session_expired(id);
         }
         Err(e) => {
@@ -134,6 +137,23 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
             );
         }
     };
+
+    // ltxmojo (the predecessor) sniffed the input for `\documentclass`
+    // and switched its `whatsin` from "fragment" to "document" when
+    // the source was a complete LaTeX document. Without this every
+    // `\usepackage` and other preamble-only command in the file
+    // surfaces as "can only appear in the preamble" errors, because
+    // the fragment profile wraps the source in a default preamble +
+    // `\begin{document}` before the engine sees the file's own
+    // `\usepackage` calls.
+    //
+    // We promote on the server side rather than asking the frontend
+    // to set the right profile: the source of truth is the file
+    // itself, and we'd rather not depend on the client knowing the
+    // convention.
+    if matches!(whatsin, DataSize::Fragment) && contains_documentclass(&tex) {
+        whatsin = DataSize::Document;
+    }
 
     let opts = OxideConfig {
         // verbosity 1 = "normal" — emits Info!() messages so the per-request
@@ -166,7 +186,13 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
     let dt_build = t0.elapsed();
 
     let t1 = Instant::now();
-    let resp = converter.convert(format!("literal:{}", tex));
+    // Pass the absolute file path (not `literal:<contents>`) so the
+    // engine sets `\jobname` to the file stem. That lets bibliography
+    // post-processing find `<jobname>.bbl` automatically — which is
+    // how every real LaTeX paper carries its compiled bibliography.
+    // The engine's own file load redoes the read we did above
+    // for tex.len() reporting; the OS page cache makes this free.
+    let resp = converter.convert(abs_path.to_string_lossy().into_owned());
     let dt_convert = t1.elapsed();
 
     let xml = match resp.result {
@@ -186,20 +212,38 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         }
     };
 
+    // `destination` is a synthetic path inside the session dir.
+    // The post-processor never actually writes to it, but the
+    // Graphics processor uses the destination's parent as the
+    // directory it writes converted PNGs into. Pointing it at the
+    // session dir means a `\includegraphics{paper.pdf}` lands its
+    // rasterized PNG right next to the original PDF, and the
+    // file routes serve it back as `/api/session/{id}/files/x1.png`
+    // (or whatever resource name the processor picks).
+    let dest_path = session.dir.join("__preview.html");
+    let dest_str = dest_path.to_string_lossy().into_owned();
+    let session_dir_str = session.dir.to_string_lossy().into_owned();
     let post_opts = PostOptions {
         pmml: true,
         cmml: false,
         keep_xmath: false,
         stylesheet: Some("resources/XSLT/LaTeXML-html5.xsl"),
-        destination: None,
-        // We deliberately leave `source_directory` unset so the
-        // engine emits absolute paths in `<img src=...>`. Our
-        // `rewrite_session_paths` step below maps those absolute
-        // paths to `/api/session/{id}/files/<rel>`. Setting
-        // `source_directory` would make the engine emit relative
-        // paths (`<img src="fig.png">`) which the browser would
-        // resolve against `/editor` — wrong for our routing.
-        source_directory: None,
+        destination: Some(&dest_str),
+        // Set `source_directory` to the session dir so the Graphics
+        // post-processor can find user-uploaded files (e.g.
+        // `preprint_inset.pdf`) and rasterize them to PNG. Without
+        // this, Graphics' search-path list is empty and it skips
+        // conversion silently. The engine then emits the bare
+        // `<img src="preprint_inset">` from `\includegraphics{...}`,
+        // which the browser can't render.
+        //
+        // The trade-off: with source_directory set, the engine emits
+        // *relative* `<img src=...>` paths instead of absolute ones.
+        // `rewrite_session_paths` below handles both — absolute
+        // paths under session.dir AND relative paths — by mapping
+        // them to `/api/session/{id}/files/<rel>` URLs the browser
+        // can fetch.
+        source_directory: Some(&session_dir_str),
         nodefaultresources: true,
         css_files: &[],
         js_files: &[],
@@ -382,47 +426,113 @@ fn parse_line_col(seg: &str) -> (Option<u32>, Option<u32>) {
     (line, col)
 }
 
-/// Rewrite any `src="..."` or `href="..."` whose path lives under
-/// `session_dir` to `/api/session/{session_id}/files/<relative>`. The
-/// search runs over the raw HTML string; we don't need a real parser
-/// because the post-processor's output uses double-quoted attributes
-/// and absolute file paths only when the engine resolved a graphic
-/// (or similar) under our search_paths.
+/// Lightweight check for `\documentclass{...}` in a TeX source. Skips
+/// commented-out lines (a `%` before `\documentclass` on the same
+/// line). Used by `convert_one` to auto-promote `whatsin: Fragment`
+/// to `whatsin: Document` when the file is a complete LaTeX doc.
+fn contains_documentclass(tex: &str) -> bool {
+    for line in tex.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('%') {
+            continue;
+        }
+        // Same-line `%` before `\documentclass` means the directive
+        // is commented out. Cheap split-and-check.
+        if let Some(idx) = trimmed.find("\\documentclass") {
+            let prefix = &trimmed[..idx];
+            // A `%` in the prefix that isn't escaped (`\%`) comments out
+            // the rest of the line — skip.
+            if has_unescaped_percent(prefix) {
+                continue;
+            }
+            return true;
+        }
+    }
+    false
+}
+
+fn has_unescaped_percent(s: &str) -> bool {
+    let mut prev_was_backslash = false;
+    for c in s.chars() {
+        if c == '%' && !prev_was_backslash {
+            return true;
+        }
+        prev_was_backslash = c == '\\' && !prev_was_backslash;
+    }
+    false
+}
+
+/// Rewrite `src="..."` and `href="..."` attributes in the post-
+/// processed HTML so the browser can fetch session-local files via
+/// our file route. Two rewrite cases:
+///
+///  1. Absolute path under `session_dir`. Maps
+///     `src="<session_dir>/foo.png"` → `src="/api/session/<id>/files/foo.png"`.
+///     This handles graphics emitted *without* `source_directory`
+///     set on the post-processor (defence-in-depth; v0.2.0
+///     historically went down this path).
+///
+///  2. Relative path that doesn't start with `/`, `http`, `data:`,
+///     or `#`. These come from the post-processor when
+///     `source_directory` is set (the modern path), e.g.
+///     `src="x1.png"` for a rasterized PDF. Maps
+///     `src="x1.png"` → `src="/api/session/<id>/files/x1.png"`.
+///     Skips data URIs (the LaTeXML logo is base64-inlined),
+///     fragment-only refs (`#sec1`), absolute URLs.
+///
+/// Only `src` and `href` get rewritten — other attributes might
+/// legitimately carry strings that look like paths but aren't.
 fn rewrite_session_paths(html: &str, session_dir: &std::path::Path, session_id: &str) -> String {
     let prefix = match session_dir.to_str() {
         Some(s) => s,
         None => return html.to_string(),
     };
-    // For each occurrence of the absolute prefix in a quoted attribute,
-    // replace with the file-route URL. Reuse a single allocation; the
-    // happy path doesn't trigger any rewrite at all.
-    if !html.contains(prefix) {
-        return html.to_string();
-    }
 
-    let mut out = String::with_capacity(html.len());
-    let mut cursor = 0;
-    let pattern = format!("\"{prefix}");
-    while let Some(off) = html[cursor..].find(&pattern) {
-        let abs_start = cursor + off + 1; // skip the `"`
-        out.push_str(&html[cursor..abs_start]);
-        let after_prefix = abs_start + prefix.len();
-        // Find the closing quote.
-        let close = match html[after_prefix..].find('"') {
-            Some(i) => after_prefix + i,
-            None => {
-                out.push_str(&html[abs_start..]);
-                cursor = html.len();
-                break;
+    let prefix_url = format!("/api/session/{session_id}/files/");
+    let attr_re = regex::Regex::new(
+        r#"\s(src|href)="([^"]*)""#,
+    )
+    .unwrap();
+
+    attr_re
+        .replace_all(html, |caps: &regex::Captures| {
+            let attr = &caps[1];
+            let val = &caps[2];
+
+            // Case 1: absolute path under session_dir.
+            if let Some(rest) = val.strip_prefix(prefix) {
+                let rel = rest.trim_start_matches('/');
+                return format!(r#" {attr}="{prefix_url}{rel}""#);
             }
-        };
-        let rel_with_lead = &html[after_prefix..close];
-        let rel = rel_with_lead.trim_start_matches('/');
-        out.push_str(&format!("/api/session/{session_id}/files/{rel}"));
-        cursor = close;
-    }
-    out.push_str(&html[cursor..]);
-    out
+
+            // Skip protocol-y, fragment, data, anchor-only,
+            // root-absolute non-API URLs. Anything left is a
+            // relative path the browser would resolve against
+            // `/editor` — we want it pointed at the file route.
+            if val.is_empty()
+                || val.starts_with("data:")
+                || val.starts_with('#')
+                || val.starts_with('/')
+                || val.starts_with("http://")
+                || val.starts_with("https://")
+                || val.starts_with("mailto:")
+                || val.starts_with("ftp://")
+                || val.starts_with("file:")
+            {
+                return caps[0].to_string();
+            }
+
+            // Only rewrite `src` (graphics) by default. `href`
+            // relative refs are usually intra-document anchors
+            // emitted by the XSLT, which the browser can resolve
+            // against `/editor` correctly.
+            if attr != "src" {
+                return caps[0].to_string();
+            }
+
+            format!(r#" {attr}="{prefix_url}{val}""#)
+        })
+        .into_owned()
 }
 
 #[cfg(test)]
@@ -549,6 +659,32 @@ Warn:Recovery:something Patched up after the error\n\
             .find(|d| d.category.contains("\\also"))
             .expect("undefined:\\also not seen");
         assert!(matches!(also.severity, Severity::Error));
+    }
+
+    #[test]
+    fn documentclass_detector_handles_common_cases() {
+        // Bare body — no \documentclass.
+        assert!(!contains_documentclass(r"Hello \(x^2\)."));
+        // Standard preamble.
+        assert!(contains_documentclass(
+            "\\documentclass{article}\n\\begin{document}\nHi\n\\end{document}"
+        ));
+        // Indented (blank lines / tabs before).
+        assert!(contains_documentclass(
+            "\n\n  \\documentclass[12pt]{article}\n"
+        ));
+        // Commented-out line should NOT count.
+        assert!(!contains_documentclass(
+            "% \\documentclass{article}\nbody only"
+        ));
+        // Same-line % before \documentclass — also commented out.
+        assert!(!contains_documentclass(
+            "stuff % then \\documentclass{article}\n"
+        ));
+        // Escaped \% before \documentclass — the directive is real.
+        assert!(contains_documentclass(
+            "stuff \\% then \\documentclass{article}\n"
+        ));
     }
 
     #[test]

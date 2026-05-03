@@ -8,6 +8,31 @@ The plan: provision the box, build the image locally, push to ghcr.io,
 pull on the box, run docker-compose with Anubis in front, terminate
 TLS with Caddy on the host.
 
+## What ships, what doesn't
+
+The Dockerfile is multi-stage. The published image (~484 MB)
+contains **only the compiled binary + frontend bundle**. The
+intermediate stages — which carried the latexml-oxide source, the
+Rust build cache, and the npm tree — are discarded after each
+stage; nothing from them ends up in the layers that get pushed.
+
+| Stage         | What it does                            | In the pushed image? |
+|---------------|-----------------------------------------|----------------------|
+| `builder`     | Rust release build of ar5iv-editor      | No — discarded       |
+| `frontend`    | Vite production bundle                  | No — discarded       |
+| `runtime`     | Debian slim + texlive + ImageMagick + Ghostscript + the binary + the frontend bundle | **Yes** — this is what `docker push` sends |
+
+The `examples/` tree (including the arXiv tarball) IS embedded in
+the binary at compile time via `include_dir!`, so demo content is
+extractable from the image. That's intentional — the demo content
+isn't sensitive.
+
+**The latexml-oxide source is not in the image.** The image is a
+binary derivative of that source, however, so we keep the
+published ghcr.io package **private** (only the deploy box pulls
+via `docker login`). Do not flip it to public without revisiting
+that decision against the latexml-oxide repo's license.
+
 If conversions feel under load, dashboard → Resize → HF 4 GB. Same IP,
 same data, ~5 min downtime. See the "Upgrade path" section.
 
@@ -103,8 +128,10 @@ COOKIE_DOMAIN=<your-domain>
 AR5IV_IMAGE=ghcr.io/<your-github-user>/ar5iv-editor:latest
 EOF
 
-# If your image is private, log in with the same PAT.
-# echo $GITHUB_TOKEN | docker login ghcr.io -u <user> --password-stdin
+# The image is private (the latexml-oxide source we built it from
+# is treated as private; the binary stays in step). Log in with a
+# read-scoped PAT.
+echo $GITHUB_TOKEN | docker login ghcr.io -u <user> --password-stdin
 
 cd deploy
 docker compose pull

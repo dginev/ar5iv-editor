@@ -40,6 +40,7 @@ pub fn router(state: AppState) -> Router {
         .route("/editor", get(routes::editor))
         .route("/convert", any(ws::ws_handler))
         .merge(files::router())
+        .route("/api/version", get(routes::version))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

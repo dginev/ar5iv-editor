@@ -7,6 +7,26 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Build-time information about the latexml-oxide path-dep that's
+/// linked into this binary. Surfaced via `GET /api/version` so the
+/// frontend can render a "powered by latexml-oxide @<sha>" link in
+/// the preview header.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionInfo {
+    pub latexml_oxide: LatexmlOxideVersion,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LatexmlOxideVersion {
+    /// Short SHA of the commit ar5iv-editor was built against.
+    pub sha:  String,
+    /// Commit date in YYYY-MM-DD form.
+    pub date: String,
+    /// Repo URL pointing at the exact tree the binary was built
+    /// from. Useful as a click target on the preview-header link.
+    pub url:  String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConvertRequest {
     pub id: u64,
