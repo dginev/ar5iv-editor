@@ -13,12 +13,25 @@ arXiv HTML page.
 
 ## Status
 
-**v0.1.0 — first alpha.** End-to-end pipeline is real (no stub): every
+**v0.2.0 — file panel UI.** End-to-end pipeline is real (no stub): every
 keystroke runs through `latexml-oxide`, post-processes XMath into MathML,
 applies the bundled HTML5 XSLT, and morphs the result into the preview.
-Light and dark themes for editor + preview, 16 example documents ported
-from ltxmojo, sub-100 ms warm-conversion latency in release builds. Expect
-ongoing rough edges around package coverage; see the *Known gaps* section.
+v0.2 ships:
+
+- Three-pane shell (files / source / preview) with draggable resizers.
+- Per-user, per-slot anonymous sessions backed by tmpdirs. Each example
+  the user opens lives in its own scratch directory and survives until
+  10 minutes of inactivity.
+- File panel: tree, click-to-open, multi-buffer editor with cursor /
+  scroll / undo preserved per file, single-file + folder upload, ZIP /
+  tar.gz import as new project, ZIP export of the whole project.
+- Engine diagnostics surfaced inline: line-anchored ones light up
+  CodeMirror's lint gutter, unanchored ones attach to a header badge.
+- Disk and URL identity decoupled: 256-bit OsRng tokens, the on-disk
+  directory name is unrelated to the URL-visible session id, logs
+  redact through a request-id (no token bytes in plaintext).
+
+Expect ongoing rough edges around package coverage; see *Known gaps*.
 
 ## Stack
 
@@ -45,10 +58,35 @@ ar5iv-editor/
 ├── crates/
 │   ├── ar5iv-editor-protocol/              shared wire types
 │   └── ar5iv-editor-server/                Axum binary + lib
-│       ├── src/                            main, lib, routes, ws, convert, …
+│       ├── src/
+│       │   ├── main.rs, lib.rs             entrypoint + crate root
+│       │   ├── config.rs, error.rs         tunables + AppError taxonomy
+│       │   ├── routes.rs, ws.rs            HTTP + WebSocket handlers
+│       │   ├── convert.rs                  latexml-oxide worker thread
+│       │   ├── session.rs                  per-(user, slot) tmpdir registry
+│       │   ├── files.rs                    file routes (CRUD + uploads)
+│       │   ├── archive.rs                  ZIP + tar.gz unpack, ZIP export
+│       │   ├── examples.rs                 embedded examples manifest
+│       │   └── quota.rs                    size + count + per-IP guards
 │       └── templates/                      Askama HTML templates
+├── docs/
+│   └── FileUI.md                           file-panel design (v1.2)
+├── examples/                               shared example tree (server + frontend)
+│   ├── _index.json                         manifest used by both sides
+│   └── <slug>/main.tex                     one per example
+├── deploy/                                 docker-compose + Anubis policy
 └── frontend/                               Vite + TS + CodeMirror 6
-    └── src/                                main, editor, ws, preview, examples
+    └── src/
+        ├── main.ts                         bootstrap + convert chain
+        ├── editor.ts                       CM6 multi-buffer editor
+        ├── files.ts                        FilePanel (tree, uploads, export)
+        ├── session.ts                      SessionClient (HTTP wrapper)
+        ├── resizers.ts                     pane resizers
+        ├── toast.ts                        small notification stack
+        ├── ws.ts                           ConvertClient (WebSocket)
+        ├── preview.ts                      shadow-DOM preview
+        ├── examples.ts                     loads `examples/_index.json`
+        └── styles.css                      chrome stylesheet
 ```
 
 ## Prerequisites
@@ -100,6 +138,8 @@ the workspace root.
 
 ### Configuration (env)
 
+Listener and frontend:
+
 | Var                          | Default                     | Meaning                                  |
 |------------------------------|-----------------------------|------------------------------------------|
 | `AR5IV_EDITOR_BIND`          | `127.0.0.1:3000`            | Listen address                           |
@@ -107,44 +147,103 @@ the workspace root.
 | `AR5IV_EDITOR_STATIC_DIR`    | `frontend/dist`             | Where `/static` is served from           |
 | `RUST_LOG`                   | `info,ar5iv_editor=debug`   | tracing-subscriber filter                |
 
+Sessions and quotas (tunables for the file panel UI):
+
+| Var                                   | Default                          | Meaning                                                |
+|---------------------------------------|----------------------------------|--------------------------------------------------------|
+| `AR5IV_EDITOR_SESSIONS_DIR`           | `$TMPDIR/ar5iv-editor-sessions`  | Where session tmpdirs live                             |
+| `AR5IV_EDITOR_SESSION_IDLE_SECS`      | `600`                            | Idle timeout before GC removes a session (10 min)      |
+| `AR5IV_EDITOR_GC_INTERVAL_SECS`       | `30`                             | How often the GC sweep runs                            |
+| `AR5IV_EDITOR_QUOTA_SESSION_BYTES`    | `52428800` (50 MB)               | Max total size per session                             |
+| `AR5IV_EDITOR_QUOTA_SESSION_FILES`    | `200`                            | Max file count per session                             |
+| `AR5IV_EDITOR_QUOTA_UPLOAD_BYTES`     | `10485760` (10 MB)               | Max single-file upload size                            |
+| `AR5IV_EDITOR_QUOTA_ARCHIVE_BYTES`    | `26214400` (25 MB)               | Max archive (ZIP / tar.gz) size                        |
+| `AR5IV_EDITOR_QUOTA_ROOT_BYTES`       | `2147483648` (2 GB)              | Soft cap on the entire sessions root                   |
+| `AR5IV_EDITOR_QUOTA_PER_USER`         | `8`                              | Concurrent sessions per `user_id` (LRU eviction)       |
+| `AR5IV_EDITOR_QUOTA_PER_IP`           | `16`                             | `user_id`s per remote IP                               |
+
+## Production deployment (Anubis)
+
+For public-facing deploys put [Anubis](https://github.com/TecharoHQ/anubis)
+in front of the Axum binary so anonymous compute isn't free for
+crawlers. See `deploy/README.md` for the docker-compose setup, the
+deny-by-default policy, and the smoke-tests that verify the
+WebSocket upgrade and streaming uploads survive the proxy.
+
 ## Tests
 
 ```sh
-cargo test --workspace
+cargo test --workspace            # ~37 fast tests
+cargo test --workspace -- --ignored --test-threads=1  # plus 4 heavy ones
+cd frontend && npm run build      # typecheck + bundle
 ```
 
-Includes:
-- `convert::tests::round_trips_a_math_fragment` — a real conversion that
-  asserts MathML in the response.
-- `tests/ws_round_trip.rs` — end-to-end test: boots the server on a random
-  port, connects via `tokio-tungstenite`, sends `\(x^2 + y^2 = z^2\)`,
-  asserts MathML round-trips.
-- `convert::tests::measure_pipeline` (`#[ignore]`) — wall-clock
-  micro-benchmark with per-stage timings (`from_config`,
-  `converter.convert`, `run_post_processing`).
+The fast suite covers:
+- `session::tests` — token / slot / resolve chokepoints.
+- `convert::tests` — math fragment round-trip, path-rewrite, the
+  diagnostic parser (synthetic + real engine run with an
+  undefined-macro fixture).
+- `archive::tests` — ZIP + tar.gz unpack, path-traversal rejection,
+  symlink rejection, allowlist, oversized-entry rejection,
+  Skip / Overwrite overlay, export → import round-trip.
+- `tests/files_round_trip.rs` — 14 end-to-end HTTP route checks
+  (CRUD, dedup, eviction, GC, orphan sweep, foreign-user 403,
+  expired 410, archive import-as-new-project, export-zip).
+- `tests/ws_round_trip.rs` — session-bound WS round-trip with
+  `\input` resolution from a PUT'd file.
+
+`#[ignore]`-by-default heavy tests:
+- `tests/search_paths_de_risk.rs` — 3 the de-risk that
+  `OxideConfig.search_paths` resolves `\input` and `\includegraphics`.
+- `tests/ws_graphics_round_trip.rs` — confirms that
+  `<img src="<absolute fs path>">` from the engine is rewritten into
+  `/api/session/{id}/files/fig.png` so the browser can actually fetch
+  it.
+- `convert::tests::measure_pipeline` — wall-clock micro-benchmark
+  with per-stage timings.
 
 ## Wire protocol
 
-Single WebSocket at `/convert`; JSON text frames.
+WebSocket at `/convert?session_id=…&user_id=…`; JSON text frames.
+HTTP file routes under `/api/*` carry the user id in the
+`X-Ar5iv-User` header. The full surface is documented in
+`docs/FileUI.md`; the convert frame in particular looks like:
 
 Client → server:
 
 ```json
-{ "id": 7, "tex": "\\(x^2\\)", "preamble": null,
+{ "id": 7, "active_file": "main.tex", "version": 3, "preamble": null,
   "profile": "fragment", "format": "html5", "preload": ["..."] }
 ```
 
 Server → client:
 
 ```json
-{ "id": 7, "result": "<div>…</div>", "status": "Status:conversion:0",
-  "status_code": 0, "log": "…" }
+{ "id": 7, "result": "<div>…</div>", "status": "No obvious problems",
+  "status_code": 0, "version": 3, "log": "…",
+  "diagnostics": [
+    { "severity": "error", "category": "undefined:\\foo",
+      "message": "The token T_CS[\\foo] is not defined.",
+      "source": "main.tex", "from_line": 1, "from_col": 19 }
+  ] }
 ```
 
-The worker drains the inbound queue before each digest and replies with
-`{ "status": "superseded", "status_code": 0, "result": "" }` for any
-request overtaken by a newer one. The frontend filters by id and discards
-`superseded` frames so stale results never overwrite the freshest preview.
+`active_file` names a file that already lives on disk in the
+session's tmpdir (PUT it via the file route first). The worker reads
+the path off disk, sets `OxideConfig.search_paths` to the session
+dir so `\input` and `\includegraphics` resolve, then post-processes
+the rendered HTML to rewrite any `<img src="<session_dir>/…">` into
+`/api/session/{id}/files/<rel>` URLs the browser can fetch.
+
+Status codes: `0` = clean, `2` = errors, `3` = fatal,
+`4` = `session_expired` (the session was GC'd; the client should
+re-open the slot).
+
+The worker drains the inbound queue before each digest and replies
+with `{ "status": "superseded", "status_code": 0, "result": "" }` for
+any request overtaken by a newer one. The frontend filters by id
+*and* by the echoed `version` so stale convert results can't
+overwrite a freshest preview after a write.
 
 ## Known gaps
 
@@ -161,8 +260,11 @@ request overtaken by a newer one. The frontend filters by id and discards
 ## Roadmap
 
 1. Single-binary deployment via `rust-embed` over `frontend/dist`.
-2. Optional: re-add user/profile DB and ZIP archive upload from ltxmojo.
-3. Closing the package-coverage gaps listed above.
+2. File rename + delete in the file panel (server routes already
+   exist; the UI is intentionally deferred — see `docs/FileUI.md`
+   "Non-goals").
+3. Multi-file examples that actually use multiple files.
+4. Closing the package-coverage gaps listed above.
 
 ## License
 

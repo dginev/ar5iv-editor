@@ -1,0 +1,42 @@
+# Anubis policy for ar5iv-editor — deny by default, browsers only.
+#
+# See https://anubis.techaro.lol/docs/ for the full policy reference.
+# Mount this file into the Anubis container at /data/cfg/botPolicies.yaml
+# (the path the upstream image expects). The accompanying
+# `docker-compose.yml` does that automatically.
+#
+# Threat model:
+#
+# Anonymous file uploads + LaTeX compute + free disk + WebSockets is
+# exactly the kind of free-compute target that aggressive scrapers go
+# after. Anubis sits in front of the Axum binary and forces every
+# requester to clear a JS-based proof-of-work challenge before the
+# editor surface (`/editor`, `/api/*`, `/convert`) is reachable.
+# The cost a bot pays to clear Anubis dwarfs the cost of opening a
+# session, and the user's per-tab + per-IP caps remain as a second
+# layer in case a scripted client does manage to clear the gate.
+#
+# Once a browser passes, Anubis sets a signed cookie; subsequent
+# requests in that browser session sail through without re-prompting.
+# Default token lifetime is generous enough that a user opens the app
+# once and edits in for hours without re-challenge.
+
+bots:
+  # Allow common search engines to index the marketing pages so
+  # `/about` and `/help` show up in results. Editor + APIs stay
+  # gated regardless.
+  - name: well-known-search-engines
+    user_agent_regex: \\b(?:Googlebot|bingbot|DuckDuckBot|Yandex|Baiduspider|Applebot)\\b
+    action: ALLOW
+    path_regex: ^/(about|help|static/|favicon)
+  # Everything else under the marketing surface still gets the
+  # challenge — bots don't need to render the editor.
+  - name: deny-everything-else
+    action: CHALLENGE
+
+# Anubis forwards `Upgrade: websocket` and chunked uploads correctly,
+# which is what `/convert` (WS) and the streaming multipart routes
+# (`POST /api/session/{id}/upload`, `POST /api/session/{id}/upload-archive`,
+# `POST /api/import-archive`) need. Verify on first deploy by uploading
+# a non-trivial archive and watching the convert preview update — if
+# either piece breaks the symptom is immediate and obvious.

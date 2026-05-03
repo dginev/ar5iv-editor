@@ -1,0 +1,48 @@
+services:
+  # Anubis fronts everything. Public traffic hits :8080; Anubis
+  # forwards to the Axum binary on :3000 once the requester has
+  # cleared the JS challenge.
+  anubis:
+    image: ghcr.io/techarohq/anubis:latest
+    restart: unless-stopped
+    environment:
+      BIND: ":8080"
+      TARGET: "http://ar5iv-editor:3000"
+      POLICY_FNAME: "/data/cfg/botPolicies.yaml"
+      # Cookie name + key for signing. Replace `change-me-in-prod`
+      # with a 32+ byte random value before deploying — Anubis won't
+      # start if it's missing.
+      ED25519_PRIVATE_KEY_HEX: "${ANUBIS_KEY:?set ANUBIS_KEY in your .env to a hex-encoded ed25519 private key}"
+      COOKIE_DOMAIN: "${COOKIE_DOMAIN:-}"
+    volumes:
+      - ./anubis.yaml:/data/cfg/botPolicies.yaml:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      - ar5iv-editor
+
+  ar5iv-editor:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      AR5IV_EDITOR_BIND: "0.0.0.0:3000"
+      AR5IV_EDITOR_STATIC_DIR: "/app/frontend/dist"
+      AR5IV_EDITOR_SESSIONS_DIR: "/var/ar5iv-sessions"
+      RUST_LOG: "info,ar5iv_editor=info"
+    volumes:
+      # Sessions live on a tmpfs by default so a server restart
+      # automatically clears them; bind-mount a real path if you'd
+      # rather see the directory contents.
+      - ar5iv-sessions:/var/ar5iv-sessions
+
+volumes:
+  ar5iv-sessions:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=2g"
