@@ -98,7 +98,7 @@ git checkout
 # Mint a long-lived ed25519 private key for Anubis cookie signing
 # (32 bytes hex). This stays on the server — don't commit it.
 cat > deploy/.env <<EOF
-ANUBIS_KEY=$(openssl rand -hex 64)
+ANUBIS_KEY=$(openssl rand -hex 32)
 COOKIE_DOMAIN=<your-domain>
 AR5IV_IMAGE=ghcr.io/<your-github-user>/ar5iv-editor:latest
 EOF
@@ -126,7 +126,14 @@ for search engines, so no challenge for `curl`).
 ```sh
 cat > /etc/caddy/Caddyfile <<EOF
 <your-domain> {
-    reverse_proxy localhost:8080
+    reverse_proxy localhost:8080 {
+        # Anubis insists on X-Real-Ip being set by the upstream
+        # proxy and 500s without it. Caddy's `reverse_proxy` only
+        # sets X-Forwarded-For by default — we have to add X-Real-Ip
+        # explicitly. Without this every request through Caddy
+        # turns into a 500 from Anubis.
+        header_up X-Real-Ip {remote_host}
+    }
 }
 EOF
 systemctl restart caddy

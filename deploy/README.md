@@ -29,7 +29,7 @@ checkouts:
 ```sh
 cd ~/git/ar5iv-editor/deploy
 # Mint a long-lived ed25519 private key for Anubis cookie signing.
-echo "ANUBIS_KEY=$(openssl rand -hex 64)" > .env
+echo "ANUBIS_KEY=$(openssl rand -hex 32)" > .env
 # Optional: set the cookie domain so the same browser session works
 # across subdomains.
 echo "COOKIE_DOMAIN=editor.example.org" >> .env

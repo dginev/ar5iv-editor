@@ -4,7 +4,7 @@
 # Usage from the repo root:
 #
 #     fly launch --no-deploy --copy-config --config deploy/fly.toml
-#     fly secrets set ANUBIS_KEY=$(openssl rand -hex 64)
+#     fly secrets set ANUBIS_KEY=$(openssl rand -hex 32)
 #     fly deploy --dockerfile deploy/Dockerfile
 #
 # Anubis is left out of this config — Fly's edge handles a lot of
