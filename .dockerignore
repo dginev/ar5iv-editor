@@ -1,0 +1,12 @@
+# Don't ship build artefacts, IDE clutter, or VCS metadata into the
+# build context. The Dockerfile only needs source.
+target/
+**/node_modules/
+frontend/dist/
+.git/
+.idea/
+.vscode/
+.claude/
+*.log
+*.swp
+.DS_Store
