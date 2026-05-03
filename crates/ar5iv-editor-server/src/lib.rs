@@ -34,7 +34,7 @@ pub struct AppState {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(routes::index))
+        .route("/", get(routes::root_redirect))
         .route("/about", get(routes::about))
         .route("/help", get(routes::help))
         .route("/editor", get(routes::editor))

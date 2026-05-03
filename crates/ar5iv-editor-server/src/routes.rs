@@ -2,14 +2,14 @@ use askama::Template;
 use axum::{
     Json,
     http::StatusCode,
-    response::{Html, IntoResponse, Response},
+    response::{Html, IntoResponse, Redirect, Response},
 };
 
 use ar5iv_editor_protocol::{LatexmlOxideVersion, VersionInfo};
 
 use crate::{
     error::AppError,
-    templates::{AboutTemplate, EditorTemplate, HelpTemplate, IndexTemplate},
+    templates::{AboutTemplate, EditorTemplate, HelpTemplate},
 };
 
 /// Captured at build time from `build.rs`. Format: short SHA.
@@ -20,8 +20,9 @@ const LATEXML_OXIDE_DATE: &str = env!("LATEXML_OXIDE_DATE");
 /// `AR5IV_EDITOR_LATEXML_OXIDE_URL` if you fork the engine.
 const LATEXML_OXIDE_REPO_DEFAULT: &str = "https://github.com/dginev/latexml-oxide";
 
-pub async fn index() -> Result<Response, AppError> {
-    Ok(render_html(StatusCode::OK, IndexTemplate.render()?))
+/// `GET /` — the editor is the app's home; bounce to it.
+pub async fn root_redirect() -> Redirect {
+    Redirect::permanent("/editor")
 }
 
 pub async fn editor() -> Result<Response, AppError> {
