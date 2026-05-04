@@ -19,6 +19,12 @@ pub struct ExampleManifestEntry {
     /// that the server unpacks into the session at slot-create time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archive: Option<String>,
+    /// Soft-hide for examples we want to keep in the tree (so we
+    /// can re-enable later without rewriting history) but not
+    /// surface in the dropdown or accept as a slot. The frontend
+    /// filters the same flag from `EXAMPLES_LIST`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,10 +48,16 @@ impl ExampleCatalog {
         Ok(Self { manifest })
     }
 
-    pub fn list(&self) -> &[ExampleManifestEntry] { &self.manifest.examples }
+    /// Iterator over examples that should be visible to clients —
+    /// i.e. excludes anything flagged `"disabled": true` in the
+    /// manifest. Disabled entries are still embedded so we can
+    /// flip them back on without touching the include_dir tree.
+    pub fn list(&self) -> impl Iterator<Item = &ExampleManifestEntry> {
+        self.manifest.examples.iter().filter(|e| !e.disabled)
+    }
 
     pub fn get(&self, slug: &str) -> Option<&ExampleManifestEntry> {
-        self.manifest.examples.iter().find(|e| e.slug == slug)
+        self.manifest.examples.iter().find(|e| e.slug == slug && !e.disabled)
     }
 
     /// Materialise the example named `slug` into `dest` (which must

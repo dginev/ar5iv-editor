@@ -65,6 +65,47 @@ WORKDIR /build/ar5iv-editor
 RUN cargo build --release -p ar5iv-editor-server
 
 # --------------------------------------------------------------------
+# Stage: generate the latexml_oxide kernel dumps (`plain.dump.txt` +
+# `latex.dump.txt`) against the ambient TeX Live, mirroring the
+# `make formats` step in latexml-oxide's CI workflow. The engine
+# reads these from disk at runtime; without them every cold start
+# falls back to reconstructing kernel state from `_base` (slower,
+# noisier logs). See `latexml_engine/build.rs` for the dump search
+# path.
+#
+# We use the debug profile here (the make_formats.sh default) — the
+# binary is run exactly twice (`--init=plain.tex`, `--init=latex.ltx`)
+# and is discarded with the stage, so optimizing it would just trade
+# linker time for nothing.
+
+FROM rust:1-slim-bookworm AS formats
+WORKDIR /build
+
+# latexml-oxide's `.cargo/config.toml` uses `-Zunstable-options` and
+# pins a nightly-only linker flag, so a stable rustc fails immediately.
+# `RUSTUP_TOOLCHAIN=nightly` makes the rustup proxy auto-install +
+# select the latest nightly on first cargo invocation, matching how
+# the builder stage already handles it via `rust-toolchain.toml`.
+ENV RUST_MIN_STACK=16777216 \
+    CARGO_TERM_COLOR=always \
+    RUSTUP_TOOLCHAIN=nightly
+
+# Native deps for the engine + `texlive-latex-base/recommended` so
+# `kpsewhich plain.tex` / `kpsewhich latex.ltx` succeed.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        pkg-config libxml2-dev libxslt1-dev libssl-dev clang \
+        libkpathsea-dev libkpathsea6 \
+        autoconf automake libtool make \
+        ca-certificates \
+        texlive-latex-base texlive-latex-recommended \
+    && rm -rf /var/lib/apt/lists/* \
+    && rustup toolchain install nightly --profile minimal
+
+COPY latexml-oxide /build/latexml-oxide
+WORKDIR /build/latexml-oxide
+RUN tools/make_formats.sh
+
+# --------------------------------------------------------------------
 
 FROM node:20-bookworm-slim AS frontend
 WORKDIR /build
@@ -102,9 +143,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY --from=builder  /build/ar5iv-editor/target/release/ar5iv-editor /app/ar5iv-editor
 COPY --from=frontend /build/ar5iv-editor/frontend/dist /app/frontend/dist
+COPY --from=formats  /build/latexml-oxide/resources/dumps /app/dumps
 
 ENV AR5IV_EDITOR_BIND="0.0.0.0:3000" \
-    AR5IV_EDITOR_STATIC_DIR="/app/frontend/dist"
+    AR5IV_EDITOR_STATIC_DIR="/app/frontend/dist" \
+    LATEXML_DUMP_DIR="/app/dumps"
 
 # `nobody` has UID 65534 — works on every Linux distro out of the
 # box. We don't need write access to anything outside the sessions

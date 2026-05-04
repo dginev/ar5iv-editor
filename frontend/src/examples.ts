@@ -18,6 +18,9 @@ export interface ExampleManifestEntry {
   /** Optional: a `.zip` or `.tar.gz` filename under `examples/<slug>/`
    *  that the server unpacks into the session at slot-create time. */
   archive?: string;
+  /** Soft-hide for examples we want to keep in the tree but not show
+   *  in the dropdown — filtered out before `EXAMPLES_LIST` is built. */
+  disabled?: boolean;
 }
 
 interface ExampleManifest {
@@ -51,13 +54,15 @@ export interface ExampleEntry extends ExampleManifestEntry {
   source: string | null;
 }
 
-export const EXAMPLES_LIST: ExampleEntry[] = manifest.examples.map((e) => {
-  const source = e.archive ? null : lookup(e.slug, e.entry);
-  if (source === null && !e.archive) {
-    throw new Error(`example source not found: ${e.slug}/${e.entry}`);
-  }
-  return { ...e, source };
-});
+export const EXAMPLES_LIST: ExampleEntry[] = manifest.examples
+  .filter((e) => !e.disabled)
+  .map((e) => {
+    const source = e.archive ? null : lookup(e.slug, e.entry);
+    if (source === null && !e.archive) {
+      throw new Error(`example source not found: ${e.slug}/${e.entry}`);
+    }
+    return { ...e, source };
+  });
 
 // Back-compat shim for the legacy `EXAMPLES` map indexed by display name.
 // Archive-bearing examples are omitted (no client-side body to inline);

@@ -110,9 +110,15 @@ const AR5IV_HOST_DEFAULTS = `
     }
   </style>
 `;
+// ar5iv stylesheets, copied from `~/git/ar5iv-css/css` into our
+// static dir. Self-hosted (rather than CDN-loaded) because the
+// CDN-imported `latin-modern-math` font sat behind a Cloudflare bot
+// challenge that browsers blocked as `ERR_BLOCKED_BY_RESPONSE.NotSameOrigin`,
+// and self-hosting the whole pair keeps the preview's font cascade
+// independent of third-party uptime / TLS / CSP quirks.
 const AR5IV_CSS_LINKS = `
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/dginev/ar5iv-css@0.8.5/css/ar5iv-fonts.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/dginev/ar5iv-css@0.8.5/css/ar5iv.css">
+  <link rel="stylesheet" href="/static/css/ar5iv-fonts.css">
+  <link rel="stylesheet" href="/static/css/ar5iv.css">
 `;
 
 function ensurePreviewHost(): HTMLElement {

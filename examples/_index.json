@@ -3,11 +3,11 @@
     { "name": "Equations", "slug": "equations", "entry": "main.tex" },
     { "name": "Tables", "slug": "tables", "entry": "main.tex" },
     { "name": "Narrative", "slug": "narrative", "entry": "main.tex" },
-    { "name": "Babel", "slug": "babel", "entry": "main.tex" },
+    { "name": "Babel", "slug": "babel", "entry": "main.tex", "disabled": true },
     { "name": "Unicode", "slug": "unicode", "entry": "main.tex" },
     { "name": "Color", "slug": "color", "entry": "main.tex" },
-    { "name": "PSTricks Graphics", "slug": "pstricks-graphics", "entry": "main.tex" },
-    { "name": "Wiki Syntax", "slug": "wiki-syntax", "entry": "main.tex" },
+    { "name": "PSTricks Graphics", "slug": "pstricks-graphics", "entry": "main.tex", "disabled": true },
+    { "name": "Wiki Syntax", "slug": "wiki-syntax", "entry": "main.tex", "disabled": true },
     { "name": "Boxes", "slug": "boxes", "entry": "main.tex" },
     { "name": "Obfuscated", "slug": "obfuscated", "entry": "main.tex" },
     { "name": "Turing Machine", "slug": "turing-machine", "entry": "main.tex" },
@@ -15,7 +15,9 @@
     { "name": "Tikz AC Voltage", "slug": "tikz-ac-voltage", "entry": "main.tex" },
     { "name": "Tikz Rotated Triangle", "slug": "tikz-rotated-triangle", "entry": "main.tex" },
     { "name": "Calculus", "slug": "calculus", "entry": "main.tex" },
-    { "name": "PlanetMath", "slug": "planetmath", "entry": "main.tex" },
-    { "name": "arXiv: 1709.07020", "slug": "arxiv", "entry": "full_article.tex", "archive": "1709.07020v1.tar.gz" }
+    { "name": "PlanetMath", "slug": "planetmath", "entry": "main.tex", "disabled": true },
+    { "name": "arXiv: 1910.06709", "slug": "arxiv-1910.06709", "entry": "main.tex" },
+    { "name": "arXiv: 2603.21852", "slug": "arxiv-2603.21852", "entry": "EML.tex" },
+    { "name": "arXiv: 1709.07020", "slug": "arxiv-1709.07020", "entry": "full_article.tex", "archive": "1709.07020v1.tar.gz" }
   ]
 }
