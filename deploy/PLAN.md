@@ -23,9 +23,18 @@ demo via `http://<vultr-ip>:8080` for the first round of testing.
 
 ## Step 1 — Build + push the image (your laptop, 5–10 min)
 
-The Dockerfile is verified working locally (391 MB image,
-end-to-end smoke green). Push it to ghcr.io so the Vultr box can
-pull it.
+The Dockerfile is verified working locally (~488 MB image —
+includes the latexml-oxide kernel dumps from the `make formats`
+stage so cold-start conversion doesn't have to reconstruct kernel
+state from `_base`). Push it to ghcr.io so the Vultr box can pull
+it.
+
+The version marker in the preview header pins to whatever
+`master` of `latexml-oxide` was at build time
+(`crates/ar5iv-editor-server/build.rs` reads the SHA from `git -C ../latexml-oxide rev-parse master`),
+so re-running `build-and-push.sh` after pulling latexml-oxide
+master automatically refreshes the "powered by latexml-oxide @<sha>"
+link in the UI without any code change.
 
 ```sh
 cd ~/git/ar5iv-editor
@@ -51,7 +60,7 @@ pull. Verify on first push: <https://github.com/USER>?tab=packages
 "Visibility" is **Private**.
 
 The Vultr box pulls via `docker login ghcr.io` with the same PAT
-you used here — Step 4 sets that up.
+you used here — the Step 3 bootstrap script handles that login.
 
 ---
 
@@ -70,60 +79,30 @@ wait another minute and retry.
 
 ---
 
-## Step 3 — Bootstrap the box (5 min on the Vultr server)
+## Step 3 — Bootstrap the box (one-shot script, ~5 min)
 
-Inside the SSH session:
+Steps 3–5 are mechanical. Run the bootstrap script on the box —
+it installs docker, sparse-checkouts `deploy/`, mints an Anubis
+key, logs into ghcr.io, pulls the image, and brings the stack up:
 
 ```sh
-# Update + install docker.
-apt-get update && apt-get -y upgrade
-curl -fsSL https://get.docker.com | sh
-systemctl enable --now docker
-docker --version  # sanity check
+ssh root@${VULTR_IP} \
+    GH_USER="$GH_USER" \
+    GH_TOKEN="$GH_TOKEN" \
+    'bash -s' < deploy/vultr-bootstrap.sh
 ```
 
-You can paste these as one block; they take ~3 min total on the HF
-2 GB tier.
+Or, if you'd rather paste the steps by hand, they're in the script
+under `deploy/vultr-bootstrap.sh`. Either way the end-state is the
+same: docker compose stack running, port 8080 exposed locally on
+the box.
+
+(`COOKIE_DOMAIN` is left empty by the script — Caddy fills it in
+during Step 6.)
 
 ---
 
-## Step 4 — Pull the image + bring up the stack
-
-Still on the Vultr box. We pull the deploy/ folder via sparse
-checkout so we don't drag the whole repo down for 5 small files:
-
-```sh
-mkdir -p /opt/ar5iv-editor && cd /opt/ar5iv-editor
-
-git clone --filter=blob:none --no-checkout \
-    https://github.com/${GH_USER}/ar5iv-editor .
-git sparse-checkout set deploy
-git checkout
-
-# Image is private. Log in to ghcr.io with a PAT that has
-# `read:packages` scope (a shorter-lived token than the one your
-# laptop uses to push is fine — read-only on this box).
-echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_USER" --password-stdin
-
-# Mint a long-lived ed25519 private key for Anubis cookie signing.
-cat > deploy/.env <<EOF
-ANUBIS_KEY=$(openssl rand -hex 32)
-COOKIE_DOMAIN=
-AR5IV_IMAGE=ghcr.io/${GH_USER}/ar5iv-editor:latest
-EOF
-
-cd deploy
-docker compose pull
-docker compose up -d
-docker compose ps   # both services should be 'running' / healthy
-```
-
-(Leave `COOKIE_DOMAIN` empty until you've added DNS — Caddy
-overrides it later.)
-
----
-
-## Step 5 — Pre-DNS smoke test (no TLS, direct port 8080)
+## Step 4 — Pre-DNS smoke test (no TLS, direct port 8080)
 
 Verify Anubis + the editor are reachable on the box's public IP
 before involving DNS. This isolates "is the deploy working" from
@@ -150,11 +129,11 @@ on the box), `ANUBIS_KEY` missing/short (regenerate),
 firewall on the host (Vultr rarely enables one by default).
 
 ⚠️ Vultr's Cloud Firewall *is* off by default but check
-**Server → Settings → Firewall** if step 5 hangs.
+**Server → Settings → Firewall** if this step hangs.
 
 ---
 
-## Step 6 — Add DNS (~5 min propagation)
+## Step 5 — Add DNS (~5 min propagation)
 
 Once `curl http://${VULTR_IP}:8080/about` works, point your domain
 at the box. In your DNS provider's UI:
@@ -173,7 +152,7 @@ dig +short ${DOMAIN}
 
 ---
 
-## Step 7 — Install Caddy for TLS
+## Step 6 — Install Caddy for TLS
 
 Back on the Vultr box:
 
@@ -216,7 +195,7 @@ docker compose up -d  # re-applies env
 
 ---
 
-## Step 8 — Open the editor in a browser
+## Step 7 — Open the editor in a browser
 
 ```
 https://${DOMAIN}/editor
@@ -233,7 +212,7 @@ seconds (it's a JS proof-of-work). Then the editor loads. Confirm:
 
 ---
 
-## Step 9 — CPU sanity-check (1 min)
+## Step 8 — CPU sanity-check (1 min)
 
 Verify Vultr didn't ship you slow silicon in your region. From your
 laptop:
@@ -250,7 +229,7 @@ most consistent).
 
 ---
 
-## Step 10 — Take a Vultr snapshot
+## Step 9 — Take a Vultr snapshot
 
 Dashboard → your server → Snapshots → **Take Snapshot**. ~$1/mo
 storage cost, single-click rollback if you misconfigure something
@@ -258,7 +237,7 @@ later. Worth it.
 
 ---
 
-## Step 11 — Optional: lock down SSH
+## Step 10 — Optional: lock down SSH
 
 ```sh
 # Disable password auth (you should already be on key-only).

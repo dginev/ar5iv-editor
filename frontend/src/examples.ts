@@ -62,7 +62,8 @@ export const EXAMPLES_LIST: ExampleEntry[] = manifest.examples
       throw new Error(`example source not found: ${e.slug}/${e.entry}`);
     }
     return { ...e, source };
-  });
+  })
+  .sort((a, b) => a.name.localeCompare(b.name));
 
 // Back-compat shim for the legacy `EXAMPLES` map indexed by display name.
 // Archive-bearing examples are omitted (no client-side body to inline);

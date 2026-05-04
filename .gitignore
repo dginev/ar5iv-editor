@@ -28,3 +28,19 @@ frontend/.vite/
 
 # OS
 .DS_Store
+
+# Secrets — `deploy/.env` is minted by `deploy/vultr-bootstrap.sh`
+# (and the local-test rehearsal under /tmp) and contains the
+# Anubis ed25519 cookie-signing key. Keep it out of the tree even
+# if someone runs the bootstrap script from inside a checkout.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+.netrc
+.npmrc
+
+# Claude Code local state
+.claude/

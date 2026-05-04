@@ -16,8 +16,8 @@
     { "name": "Tikz Rotated Triangle", "slug": "tikz-rotated-triangle", "entry": "main.tex" },
     { "name": "Calculus", "slug": "calculus", "entry": "main.tex" },
     { "name": "PlanetMath", "slug": "planetmath", "entry": "main.tex", "disabled": true },
-    { "name": "arXiv: 1910.06709", "slug": "arxiv-1910.06709", "entry": "main.tex" },
-    { "name": "arXiv: 2603.21852", "slug": "arxiv-2603.21852", "entry": "EML.tex" },
-    { "name": "arXiv: 1709.07020", "slug": "arxiv-1709.07020", "entry": "full_article.tex", "archive": "1709.07020v1.tar.gz" }
+    { "name": "arXiv: 1910.06709", "slug": "arxiv-1910-06709", "entry": "main.tex" },
+    { "name": "arXiv: 2603.21852", "slug": "arxiv-2603-21852", "entry": "EML.tex" },
+    { "name": "arXiv: 1709.07020", "slug": "arxiv-1709-07020", "entry": "full_article.tex", "archive": "1709.07020v1.tar.gz" }
   ]
 }

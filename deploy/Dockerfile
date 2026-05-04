@@ -90,14 +90,20 @@ ENV RUST_MIN_STACK=16777216 \
     CARGO_TERM_COLOR=always \
     RUSTUP_TOOLCHAIN=nightly
 
-# Native deps for the engine + `texlive-latex-base/recommended` so
-# `kpsewhich plain.tex` / `kpsewhich latex.ltx` succeed.
+# Native deps for the engine + the same texlive packages we ship in
+# the runtime stage. Matching the package set is important: the
+# kernel dump captures whatever `\input{...}` reachable bindings
+# resolve at dump-time, and a runtime that has *more* texlive than
+# dump-time means any package only-resolvable at runtime wouldn't
+# get its state into the dump (so `_base` reconstruction kicks in
+# anyway). Cheaper to align here than diagnose mismatch later.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config libxml2-dev libxslt1-dev libssl-dev clang \
         libkpathsea-dev libkpathsea6 \
         autoconf automake libtool make \
         ca-certificates \
         texlive-latex-base texlive-latex-recommended \
+        texlive-pictures texlive-latex-extra \
     && rm -rf /var/lib/apt/lists/* \
     && rustup toolchain install nightly --profile minimal
 
@@ -128,8 +134,17 @@ FROM debian:bookworm-slim AS runtime
 # engine has already validated the path and the upload allowlist
 # already restricts what can land. Remove the PDF-deny line so the
 # Graphics processor's `convert paper.pdf out.png` actually works.
+# `texlive-pictures` ships `tikz.sty` / `pgf.sty` / friends; without
+# it the engine warns `missing_file:tikz Can't find binding or file
+# for 'tikz.sty'` and every `\begin{tikzpicture}` collapses to a
+# wall of undefined-macro errors. `texlive-latex-extra` covers the
+# long tail of extra packages real arXiv preprints depend on
+# (`tcolorbox`, `enumitem`, `ifoddpage`, ...). Together they add
+# ~200 MB to the image but make tikz/pgf-heavy uploads convert
+# without manual fixups.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         texlive-latex-base texlive-latex-recommended \
+        texlive-pictures texlive-latex-extra \
         libxml2 libxslt1.1 ca-certificates curl \
         imagemagick ghostscript \
     && rm -rf /var/lib/apt/lists/* \
