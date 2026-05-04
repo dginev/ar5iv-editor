@@ -109,6 +109,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY latexml-oxide /build/latexml-oxide
 WORKDIR /build/latexml-oxide
+# Wipe any host-built `target/` that hitched a ride via the COPY.
+# The build context root is the parent of both repos and has no
+# `.dockerignore`, so a host `cargo build` in latexml-oxide leaks
+# its `target/` into the image. `make_formats.sh` then finds the
+# pre-built binary, skips the in-image rebuild, and runs it — but
+# the host binary was linked against the host's newer libxml2 (e.g.
+# libxml2.so.16 on a recent Debian/Ubuntu) which doesn't exist in
+# this bookworm-based stage. Removing it forces a clean
+# in-image build that links against bookworm's libxml2.so.2.
+RUN rm -rf target
 RUN tools/make_formats.sh
 
 # --------------------------------------------------------------------
