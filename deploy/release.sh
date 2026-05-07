@@ -199,11 +199,19 @@ phase_end
 if [[ $PUSH -eq 1 ]]; then
     phase_start "[A3] pre-flight registry auth"
     REGISTRY_HOST="${IMAGE_BASE%%/*}"
+    # Capture the manifest probe's combined output, then pattern-match
+    # against it. Doing this in a `cmd | grep` pipe would interact
+    # badly with `set -o pipefail` — docker exits non-zero on
+    # "manifest unknown", and pipefail propagates that even when grep
+    # matches, causing the auth check to falsely fail.
     AUTH_OK=0
     if docker manifest inspect "$IMAGE_BASE:latest" >/dev/null 2>&1; then
         AUTH_OK=1
-    elif docker manifest inspect "$IMAGE_BASE:latest" 2>&1 | grep -qE 'manifest unknown|not found|404'; then
-        AUTH_OK=1   # 404 means we're authed, the tag just doesn't exist yet
+    else
+        OUT=$(docker manifest inspect "$IMAGE_BASE:latest" 2>&1 || true)
+        case "$OUT" in
+            *"manifest unknown"*|*"not found"*|*"404"*) AUTH_OK=1 ;;
+        esac
     fi
     if [[ $AUTH_OK -eq 0 ]]; then
         die "cannot inspect $IMAGE_BASE:latest on $REGISTRY_HOST — run 'docker login $REGISTRY_HOST' first"
