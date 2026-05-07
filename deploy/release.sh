@@ -35,6 +35,13 @@
 #         Use when a Dockerfile change is being silently cached or
 #         you suspect a corrupt layer.
 #
+#     deploy/release.sh --no-host-network
+#         Use BuildKit's isolated build network instead of
+#         `--network=host`. Default is host networking because
+#         BuildKit's default network sometimes can't resolve
+#         deb.debian.org during apt-get; opt out only if you have
+#         a hardened build environment that needs the isolation.
+#
 #     deploy/release.sh --yes
 #         Skip the 5-second pre-push confirmation window. Useful in
 #         CI; never use it interactively when --push is set.
@@ -85,16 +92,18 @@ trap cleanup EXIT
 
 # -- arg parsing ------------------------------------------------------------
 PUSH=0; TAG_SOURCE=0; SYNC=1; ALLOW_DIRTY=0; NO_CACHE=0; YES=0
+HOST_NETWORK=1   # default ON — see [B] phase comment for why
 for arg in "$@"; do
     case "$arg" in
-        --push)         PUSH=1 ;;
-        --tag-source)   TAG_SOURCE=1 ;;
-        --no-sync)      SYNC=0 ;;
-        --allow-dirty)  ALLOW_DIRTY=1 ;;
-        --no-cache)     NO_CACHE=1 ;;
-        --yes|-y)       YES=1 ;;
-        -h|--help)      sed -n '2,52p' "$0"; exit 0 ;;
-        *)              die "unknown arg: $arg (try --help)" ;;
+        --push)               PUSH=1 ;;
+        --tag-source)         TAG_SOURCE=1 ;;
+        --no-sync)            SYNC=0 ;;
+        --allow-dirty)        ALLOW_DIRTY=1 ;;
+        --no-cache)           NO_CACHE=1 ;;
+        --no-host-network)    HOST_NETWORK=0 ;;
+        --yes|-y)             YES=1 ;;
+        -h|--help)            sed -n '2,62p' "$0"; exit 0 ;;
+        *)                    die "unknown arg: $arg (try --help)" ;;
     esac
 done
 [[ $TAG_SOURCE -eq 1 && $PUSH -eq 0 ]] && \
@@ -255,8 +264,26 @@ fi
 # B. Build (delegate to build-and-push.sh, no --push)
 # ---------------------------------------------------------------------------
 phase_start "[B] build $LATEST_TAG"
+# Build flags assembled in this order:
+#   1. `--network=host` by default — BuildKit's isolated build network
+#      doesn't always inherit the host's DNS, which makes `apt-get
+#      update` inside the Dockerfile fail to resolve `deb.debian.org`
+#      in sandbox-style environments. Host networking is the same
+#      mode `docker run` uses by default and works everywhere we've
+#      tried. Pass `--no-host-network` to opt back into BuildKit's
+#      isolated network if you need it.
+#   2. `--no-cache` when --no-cache is set on release.sh.
+#   3. Anything the caller already had in $DOCKER_BUILD_EXTRA, so
+#      power users can layer extra flags via the env without losing
+#      our defaults.
 BUILD_ARGS=()
+[[ $HOST_NETWORK -eq 1 ]] && BUILD_ARGS+=(--network=host)
 [[ $NO_CACHE -eq 1 ]] && BUILD_ARGS+=(--no-cache)
+# Append (not overwrite) the caller-supplied env so external usage
+# (e.g. CI passing --build-arg) survives.
+COMBINED_EXTRA="${BUILD_ARGS[*]:-} ${DOCKER_BUILD_EXTRA:-}"
+COMBINED_EXTRA="${COMBINED_EXTRA## }"
+COMBINED_EXTRA="${COMBINED_EXTRA%% }"
 
 # build-and-push.sh respects $IMAGE; we don't pass --push because we
 # want the smoke test to gate the registry push.
@@ -264,7 +291,7 @@ IMAGE="$LATEST_TAG" \
 LATEXML_PATH="$LATEXML_PATH" \
 LATEXML_OXIDE_REF="$LATEXML_OXIDE_REF" \
 DOCKER_BUILDKIT=1 \
-DOCKER_BUILD_EXTRA="${BUILD_ARGS[*]:-}" \
+DOCKER_BUILD_EXTRA="$COMBINED_EXTRA" \
     "$REPO_ROOT/deploy/build-and-push.sh"
 phase_end
 
