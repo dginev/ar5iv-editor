@@ -51,6 +51,11 @@ COPY ar5iv-editor/Cargo.toml /build/ar5iv-editor/Cargo.toml
 COPY ar5iv-editor/Cargo.lock /build/ar5iv-editor/Cargo.lock
 COPY ar5iv-editor/crates /build/ar5iv-editor/crates
 COPY ar5iv-editor/examples /build/ar5iv-editor/examples
+# `crates/ar5iv-editor-server/src/files.rs` `include_bytes!`s the
+# ar5iv stylesheets from this path so the export-zip route can ship a
+# self-contained `index.html`. Has to land in the builder stage
+# because the embed happens at compile time.
+COPY ar5iv-editor/frontend/public /build/ar5iv-editor/frontend/public
 COPY latexml-oxide /build/latexml-oxide
 
 # Override the repo's target-cpu=native via an empty .cargo/config.toml
