@@ -638,6 +638,92 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
 @keyframes toast-out {
   to   { opacity: 0; transform: translateY(0.4rem); }
 }
+
+/* -------- center-top notice banner --------
+   Click-anywhere-to-dismiss is wired in JS via a document-level
+   pointerdown listener — the notice itself is non-interactive
+   (`pointer-events: none` on the stack) so it never swallows clicks
+   meant for the chrome underneath. */
+.notice-stack {
+  position: fixed;
+  inset-block-start: calc(var(--header-height, 2.85rem) + 0.6rem);
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 150;
+  max-width: min(48rem, calc(100vw - 2rem));
+  pointer-events: none;
+}
+.notice {
+  background: color-mix(in srgb, var(--ok) 15%, var(--bg-elev));
+  color: var(--ink);
+  padding-block: 0.65rem;
+  padding-inline: 1.05rem;
+  border: 1px solid color-mix(in srgb, var(--ok) 55%, var(--bg-elev));
+  border-inline-start: 4px solid var(--ok);
+  border-radius: 6px;
+  font-family: var(--sans);
+  font-size: 0.92rem;
+  line-height: 1.4;
+  box-shadow: var(--shadow);
+  text-align: center;
+  white-space: pre-wrap;
+  animation: notice-in 220ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.notice--leaving {
+  animation: notice-out 200ms ease-out forwards;
+}
+@keyframes notice-in {
+  from { opacity: 0; transform: translateY(-0.5rem); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes notice-out {
+  to { opacity: 0; transform: translateY(-0.35rem); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notice,
+  .notice--leaving {
+    animation: none;
+  }
+}
+
+/* -------- fatal error card -------- */
+.fatal-card {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--bad);
+  padding: 1.1rem 1.4rem;
+  border-radius: 6px;
+  box-shadow: var(--shadow-lg);
+  font-family: var(--sans);
+  color: var(--ink);
+  max-width: min(34rem, calc(100vw - 2rem));
+  z-index: 200;
+  animation: toast-in 220ms ease-out;
+}
+.fatal-card__title {
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--bad);
+  margin-bottom: 0.4rem;
+}
+.fatal-card__detail {
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+  margin-bottom: 0.7rem;
+  white-space: pre-wrap;
+}
+.fatal-card__countdown {
+  font-family: var(--mono, monospace);
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
 .pane-header {
   display: flex;
   align-items: center;

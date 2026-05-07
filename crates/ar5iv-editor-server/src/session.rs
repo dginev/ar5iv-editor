@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -180,6 +180,14 @@ pub struct Session {
     /// PUT / upload / mkdir / rename / delete; echoed in convert
     /// responses so stale frames cannot overwrite the freshest preview.
     pub version:       AtomicU64,
+    /// Latest successful conversion's HTML fragment, cached so the
+    /// download endpoint can ship a self-contained `index.html`
+    /// alongside the source files. `None` until the first successful
+    /// convert. Updated by the WS handler after each non-fatal
+    /// response. Holds the path-rewritten string the browser receives
+    /// (i.e., session-dir absolute paths already mapped to
+    /// `/api/session/{id}/files/...`).
+    pub last_html:     Mutex<Option<String>>,
 }
 
 impl Session {
@@ -413,6 +421,7 @@ impl SessionRegistry {
             bytes_used:    AtomicU64::new(bytes_used),
             file_count:    AtomicU32::new(file_count),
             version:       AtomicU64::new(0),
+            last_html:     Mutex::new(None),
         });
 
         // Re-lock to insert. Race window: another caller for the same
@@ -645,6 +654,7 @@ mod tests {
             bytes_used:    AtomicU64::new(0),
             file_count:    AtomicU32::new(0),
             version:       AtomicU64::new(0),
+            last_html:     Mutex::new(None),
         }
     }
 }

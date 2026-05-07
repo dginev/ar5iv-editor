@@ -169,17 +169,32 @@ pub fn unpack_overlay(
     result
 }
 
-/// Stream a deterministic ZIP of the session's contents to `out`.
+/// Stream a deterministic ZIP of the session's contents to `out`,
+/// optionally augmented with synthetic in-memory entries (e.g. an
+/// `index.html` rendered preview + the ar5iv stylesheet bundle).
 /// Sorted entries, no symlinks emitted. Used by the export route.
+///
+/// Synthetic entries that collide with on-disk paths win (the user's
+/// own `index.html` would be overwritten by ours). Callers pass a path
+/// they don't expect to clash, or stage their own naming.
 pub fn export_zip<W: Write + std::io::Seek>(
     session_dir: &Path,
     out: &mut W,
+    extras: &[(String, Vec<u8>)],
 ) -> Result<u64, AppError> {
     use zip::write::SimpleFileOptions;
 
     // Walk the session dir collecting (relative_path, absolute_path).
+    // Drop on-disk entries that an extra is going to overwrite so the
+    // ZIP doesn't carry duplicate names.
+    let extra_names: HashSet<String> =
+        extras.iter().map(|(n, _)| n.clone()).collect();
     let mut paths: Vec<(PathBuf, PathBuf)> = Vec::new();
     walk_for_export(session_dir, session_dir, &mut paths)?;
+    paths.retain(|(rel, _)| {
+        let rel_str = rel.to_string_lossy().replace('\\', "/");
+        !extra_names.contains(&rel_str)
+    });
     paths.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut writer = zip::ZipWriter::new(out);
@@ -197,6 +212,18 @@ pub fn export_zip<W: Write + std::io::Seek>(
             .map_err(|e| AppError::internal(format!("zip read {}: {e}", abs.display())))?;
         writer
             .write_all(&bytes)
+            .map_err(|e| AppError::internal(format!("zip write: {e}")))?;
+        total = total.saturating_add(bytes.len() as u64);
+    }
+
+    let mut extras_sorted: Vec<&(String, Vec<u8>)> = extras.iter().collect();
+    extras_sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, bytes) in extras_sorted {
+        writer
+            .start_file(name.as_str(), opts)
+            .map_err(|e| AppError::internal(format!("zip start_file: {e}")))?;
+        writer
+            .write_all(bytes)
             .map_err(|e| AppError::internal(format!("zip write: {e}")))?;
         total = total.saturating_add(bytes.len() as u64);
     }
@@ -773,7 +800,7 @@ mod tests {
 
         let mut buf: Vec<u8> = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut buf);
-        export_zip(src.path(), &mut cursor).unwrap();
+        export_zip(src.path(), &mut cursor, &[]).unwrap();
         drop(cursor);
 
         let dst = tempfile::tempdir().unwrap();

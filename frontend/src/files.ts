@@ -1,4 +1,4 @@
-// File panel — tree rendering, header upload/download/import actions,
+// File panel — tree rendering, header new/upload/download actions,
 // click-to-open into the editor. No rename / delete in v1.2 per
 // `docs/FileUI.md` "Non-goals". Auto-convert is triggered via the
 // `requestPreview` callback after every successful file-op response.
@@ -6,6 +6,7 @@
 import type { EditorHandle } from "./editor.ts";
 import type { FileMeta, SessionClient, SessionEnvelope } from "./session.ts";
 import { SessionExpiredError } from "./session.ts";
+import { showFatalCard, showNotice } from "./toast.ts";
 
 const HEADER_USER = "x-ar5iv-user";
 
@@ -39,8 +40,6 @@ interface TreeNode {
   isDir:    boolean;
   children: TreeNode[];
 }
-
-const ALLOWED_ARCHIVE_EXTENSIONS = ".zip,.tar.gz,.tgz,application/zip,application/gzip,application/x-tar";
 
 export class FilePanel {
   private opts:        FilePanelOptions;
@@ -78,11 +77,10 @@ export class FilePanel {
       this.render();
     } catch (e) {
       if (e instanceof SessionExpiredError) {
-        await this.opts.session.reopen();
-        this.opts.onSessionSwap(this.opts.session.envelope);
-      } else {
-        this.opts.reportError(`refresh failed: ${e}`);
+        sessionExpiredCard();
+        return;
       }
+      this.opts.reportError(`refresh failed: ${e}`);
     }
   }
 
@@ -174,11 +172,10 @@ export class FilePanel {
       this.render();
     } catch (e) {
       if (e instanceof SessionExpiredError) {
-        await this.opts.session.reopen();
-        this.opts.onSessionSwap(this.opts.session.envelope);
-      } else {
-        this.opts.reportError(`open ${path} failed: ${e}`);
+        sessionExpiredCard();
+        return;
       }
+      this.opts.reportError(`open ${path} failed: ${e}`);
     }
   }
 
@@ -193,47 +190,34 @@ export class FilePanel {
     newFileBtn.addEventListener("click", () => void this.actionNewFile());
     this.opts.actionsEl.appendChild(newFileBtn);
 
-    const uploadFilesBtn = makeTextButton("upload", "Upload one or more files");
-    uploadFilesBtn.addEventListener("click", () => this.triggerUpload(false, false));
-    this.opts.actionsEl.appendChild(uploadFilesBtn);
-
-    const uploadFolderBtn = makeTextButton("folder", "Upload a folder (preserves directory structure)");
-    uploadFolderBtn.addEventListener("click", () => this.triggerUpload(true, false));
-    this.opts.actionsEl.appendChild(uploadFolderBtn);
-
-    const importArchiveBtn = makeTextButton(
-      "import",
-      "Import a ZIP or tar.gz as a new project",
+    const uploadBtn = makeTextButton(
+      "upload",
+      "Upload a folder (recursively; preserves directory structure)",
     );
-    importArchiveBtn.addEventListener("click", () => this.triggerUpload(false, true));
-    this.opts.actionsEl.appendChild(importArchiveBtn);
+    uploadBtn.addEventListener("click", () => this.triggerUpload());
+    this.opts.actionsEl.appendChild(uploadBtn);
 
-    const exportBtn = makeTextButton("export", "Download project as ZIP");
-    exportBtn.addEventListener("click", () => void this.actionExport());
-    this.opts.actionsEl.appendChild(exportBtn);
+    const downloadBtn = makeTextButton(
+      "download",
+      "Download the project (sources + rendered HTML) as ZIP",
+    );
+    downloadBtn.addEventListener("click", () => void this.actionDownload());
+    this.opts.actionsEl.appendChild(downloadBtn);
   }
 
-  private triggerUpload(folder: boolean, archive: boolean): void {
+  private triggerUpload(): void {
     const input = document.createElement("input");
     input.type = "file";
-    if (folder) {
-      // `webkitdirectory` is the de-facto standard now (Chrome/Edge/
-      // Safari/Firefox all support it). Picks an entire folder.
-      (input as HTMLInputElement & { webkitdirectory?: boolean }).webkitdirectory = true;
-      input.multiple = true;
-    } else if (archive) {
-      input.accept = ALLOWED_ARCHIVE_EXTENSIONS;
-    } else {
-      input.multiple = true;
-    }
+    // `webkitdirectory` is the de-facto standard (Chrome/Edge/Safari/
+    // Firefox all support it). Picks an entire folder; the browser
+    // walks the tree and posts every file with `webkitRelativePath`
+    // set, so subdirectory layout is preserved server-side.
+    (input as HTMLInputElement & { webkitdirectory?: boolean }).webkitdirectory = true;
+    input.multiple = true;
     input.addEventListener("change", () => {
       const files = Array.from(input.files ?? []);
       if (files.length === 0) return;
-      if (archive) {
-        void this.actionImportArchive(files[0]!);
-      } else {
-        void this.actionUploadFiles(files);
-      }
+      void this.actionUploadFiles(files);
     });
     input.click();
   }
@@ -253,6 +237,10 @@ export class FilePanel {
       this.opts.requestPreview();
       void this.openFile(path);
     } catch (e) {
+      if (e instanceof SessionExpiredError) {
+        sessionExpiredCard();
+        return;
+      }
       this.opts.reportError(`new file failed: ${e}`);
     }
   }
@@ -274,54 +262,35 @@ export class FilePanel {
         headers: { [HEADER_USER]: this.opts.session.userId },
       });
       if (resp.status === 410) {
-        await this.opts.session.reopen();
-        this.opts.onSessionSwap(this.opts.session.envelope);
+        sessionExpiredCard();
         return;
       }
       if (!resp.ok) {
         const txt = await resp.text();
         throw new Error(`upload failed: ${resp.status} ${txt}`);
       }
+      const ack = (await resp.json().catch(() => ({}))) as { skipped?: string[] };
       await this.refresh();
       this.opts.requestPreview();
+      if (ack.skipped && ack.skipped.length > 0) {
+        showNotice(formatSkippedMessage(ack.skipped));
+      }
     } catch (e) {
       this.opts.reportError(`upload failed: ${e}`);
     }
   }
 
-  private async actionImportArchive(file: File): Promise<void> {
-    try {
-      const buf = await file.arrayBuffer();
-      const resp = await fetch("/api/import-archive", {
-        method:  "POST",
-        body:    buf,
-        headers: {
-          [HEADER_USER]: this.opts.session.userId,
-          "content-type": guessArchiveCt(file.name),
-        },
-      });
-      if (!resp.ok) {
-        const txt = await resp.text();
-        throw new Error(`import archive failed: ${resp.status} ${txt}`);
-      }
-      const env = (await resp.json()) as SessionEnvelope;
-      // Server has minted a new slot — point our SessionClient at it
-      // and let the driver re-bind the WS / load the new entry file.
-      this.opts.session.envelope = env;
-      sessionStorage.setItem("ar5iv.current_slot", env.slot);
-      this.opts.onSessionSwap(env);
-    } catch (e) {
-      this.opts.reportError(`import archive failed: ${e}`);
-    }
-  }
-
-  private async actionExport(): Promise<void> {
+  private async actionDownload(): Promise<void> {
     try {
       const url = `/api/session/${this.opts.session.envelope.id}/export-zip`;
       const resp = await fetch(url, {
         headers: { [HEADER_USER]: this.opts.session.userId },
       });
-      if (!resp.ok) throw new Error(`export failed: ${resp.status}`);
+      if (resp.status === 410) {
+        sessionExpiredCard();
+        return;
+      }
+      if (!resp.ok) throw new Error(`download failed: ${resp.status}`);
       const blob = await resp.blob();
       const cd = resp.headers.get("content-disposition") ?? "";
       const filenameMatch = /filename="([^"]+)"/.exec(cd);
@@ -332,7 +301,7 @@ export class FilePanel {
       a.click();
       URL.revokeObjectURL(a.href);
     } catch (e) {
-      this.opts.reportError(`export failed: ${e}`);
+      this.opts.reportError(`download failed: ${e}`);
     }
   }
 }
@@ -340,6 +309,28 @@ export class FilePanel {
 // -----------------------------------------------------------------------
 // Helpers.
 // -----------------------------------------------------------------------
+
+/** Common copy for the "your tmpdir was swept" fatal card. The card is
+ *  idempotent — multiple callers racing to surface the same condition
+ *  collapse onto a single overlay. */
+function sessionExpiredCard(): void {
+  showFatalCard(
+    "Session expired",
+    "Your editing session was cleaned up after a long idle period. Reloading to start a fresh one.",
+  );
+}
+
+/** Two-line summary for the upload-skipped notice. Headline carries the
+ *  count; the second line names a few examples (truncated past a
+ *  reasonable cap so a multi-hundred-file build directory doesn't blow
+ *  out the banner). */
+function formatSkippedMessage(skipped: string[]): string {
+  const max = 8;
+  const head = skipped.slice(0, max).map((p) => p.split("/").pop() || p);
+  const more = skipped.length > max ? `, +${skipped.length - max} more` : "";
+  const noun = skipped.length === 1 ? "file" : "files";
+  return `Skipped ${skipped.length} ${noun} with unsupported extensions\n${head.join(", ")}${more}`;
+}
 
 function buildTree(files: FileMeta[]): TreeNode[] {
   // Build nested tree from flat path list. Any directory entries the
@@ -399,11 +390,4 @@ function isEditableExtension(path: string): boolean {
 
 function stripExt(name: string): string {
   return name.includes(".") ? name.slice(0, name.lastIndexOf(".")) : name;
-}
-
-function guessArchiveCt(name: string): string {
-  if (name.toLowerCase().endsWith(".zip")) return "application/zip";
-  if (name.toLowerCase().endsWith(".tar.gz")) return "application/gzip";
-  if (name.toLowerCase().endsWith(".tgz")) return "application/gzip";
-  return "application/octet-stream";
 }

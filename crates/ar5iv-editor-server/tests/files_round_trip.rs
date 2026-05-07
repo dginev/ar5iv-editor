@@ -609,14 +609,24 @@ async fn upload_archive_overlays_into_current_session() {
 }
 
 #[tokio::test]
-async fn upload_extension_allowlist_rejects_unknown_types() {
+async fn upload_extension_allowlist_skips_unknown_types() {
+    // Disallowed extensions in a folder upload (latex scratch like
+    // `.aux`, `.out`, plus anything the user dragged in by accident)
+    // are quietly dropped server-side and returned in `skipped` so
+    // the frontend can surface them as a non-fatal info toast. This
+    // is what makes the recursive folder picker usable on a real
+    // build tree instead of bailing on the whole batch.
     let rig = TestRig::boot(default_session_cfg()).await;
     let user = rig.mint_user().await;
     let s = rig.create_session(&user, "blank").await;
     let id = s["id"].as_str().unwrap();
 
     let form = Form::new()
-        .part("f", Part::bytes(b"MZ".to_vec()).file_name("evil.exe"));
+        .part("evil", Part::bytes(b"MZ".to_vec()).file_name("evil.exe"))
+        .part(
+            "good",
+            Part::bytes(b"\\section{x}".to_vec()).file_name("ch1.tex"),
+        );
     let resp = rig
         .client
         .post(rig.url(&format!("/api/session/{id}/upload")))
@@ -625,5 +635,20 @@ async fn upload_extension_allowlist_rejects_unknown_types() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 413);
+    assert_eq!(resp.status(), 200);
+    let ack: Value = resp.json().await.unwrap();
+    let written: Vec<String> = ack["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(written, vec!["ch1.tex".to_string()]);
+    let skipped: Vec<String> = ack["skipped"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(skipped, vec!["evil.exe".to_string()]);
 }

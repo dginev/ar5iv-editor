@@ -110,7 +110,20 @@ async fn handle_socket(socket: WebSocket, state: AppState, session: Arc<Session>
                 let session = session.clone();
                 tokio::spawn(async move {
                     tokio::select! {
-                        resp = converter.convert(req, session) => {
+                        resp = converter.convert(req, session.clone()) => {
+                            // Stash the rendered HTML on the session so
+                            // the export-zip route can ship a
+                            // self-contained `index.html`. Skip
+                            // superseded / fatal frames — only retain
+                            // the latest *useful* preview. status_code
+                            // 0 = clean, 2 = errors-but-rendered.
+                            if !resp.result.is_empty()
+                                && (resp.status_code == 0 || resp.status_code == 2)
+                                && resp.status != "superseded"
+                                && let Ok(mut slot) = session.last_html.lock()
+                            {
+                                *slot = Some(resp.result.clone());
+                            }
                             let _ = resp_tx.send(resp).await;
                         }
                         _ = cancel_rx => {

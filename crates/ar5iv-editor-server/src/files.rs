@@ -82,6 +82,13 @@ pub struct OkAck {
 pub struct UploadAck {
     pub files:   Vec<FileMeta>,
     pub version: u64,
+    /// Filenames whose extension wasn't in the upload allowlist and
+    /// were silently skipped server-side. The frontend surfaces this
+    /// list as an info toast so the user knows their `.out` / `.aux` /
+    /// scratch files won't show up in the tree. Empty when every
+    /// posted file landed cleanly.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -296,6 +303,7 @@ async fn upload_files(
     let session = require_session(&state, &headers, &id).await?;
     let cfg = state.sessions.config();
     let mut written: Vec<FileMeta> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
 
     while let Some(mut field) = multipart
         .next_field()
@@ -307,9 +315,18 @@ async fn upload_files(
             .ok_or_else(|| AppError::bad_request("multipart: missing filename"))?
             .to_string();
         if !is_allowed_extension(&filename) {
-            return Err(AppError::quota(format!(
-                "file extension not in allowlist: {filename}"
-            )));
+            // Drain the field's body so the next field can be parsed,
+            // then move on. Folder uploads in particular routinely
+            // include latex scratch (`.aux`, `.out`, `.log`) the user
+            // doesn't care about; bailing on the whole batch over one
+            // unrecognised extension makes the button useless.
+            while let Some(_chunk) = field
+                .chunk()
+                .await
+                .map_err(|e| AppError::bad_request(format!("multipart chunk: {e}")))?
+            {}
+            skipped.push(filename);
+            continue;
         }
         let path = session.resolve(&filename)?;
         if let Some(parent) = path.parent() {
@@ -342,7 +359,7 @@ async fn upload_files(
 
     let version = session.bump_version();
     session.touch();
-    Ok(Json(UploadAck { files: written, version }))
+    Ok(Json(UploadAck { files: written, version, skipped }))
 }
 
 async fn upload_archive(
@@ -379,7 +396,7 @@ async fn upload_archive(
             size: 0, // size known per-entry but not surfaced individually here
         })
         .collect();
-    Ok(Json(UploadAck { files, version }))
+    Ok(Json(UploadAck { files, version, skipped: Vec::new() }))
 }
 
 async fn export_zip(
@@ -391,12 +408,24 @@ async fn export_zip(
     session.touch();
     let dir = session.dir.clone();
 
+    // Bundle the cached preview HTML alongside the source files when
+    // it's available. Session-relative `/api/session/{id}/files/<rel>`
+    // URLs in the fragment are rewritten to plain `<rel>` so the
+    // extracted ZIP renders standalone (extract → open `index.html`).
+    let session_id = session.id.to_string();
+    let html_fragment = session
+        .last_html
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
+    let extras = build_export_extras(html_fragment, &session_id);
+
     // Build the ZIP into a buffer on the blocking pool. Session quotas
     // bound the size — the 50 MB session cap is comfortably in-memory.
     let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, AppError> {
         let mut buf: Vec<u8> = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut buf);
-        archive::export_zip(&dir, &mut cursor)?;
+        archive::export_zip(&dir, &mut cursor, &extras)?;
         Ok(buf)
     })
     .await
@@ -414,6 +443,66 @@ async fn export_zip(
         bytes,
     )
         .into_response())
+}
+
+/// ar5iv stylesheets (copied in from `~/git/ar5iv-css/css` into
+/// `frontend/public/css/`) embedded at compile time so the export
+/// route doesn't depend on the static-dir layout. Same files the live
+/// preview's shadow root pulls via `/static/css/...`.
+const AR5IV_CSS: &[u8] = include_bytes!("../../../frontend/public/css/ar5iv.css");
+const AR5IV_FONTS_CSS: &[u8] =
+    include_bytes!("../../../frontend/public/css/ar5iv-fonts.css");
+
+/// Build the synthetic-entry list for the export ZIP. When a preview
+/// HTML is available we emit a self-contained `index.html` plus the
+/// ar5iv stylesheet bundle under `css/`. Without a preview, only the
+/// session's source files end up in the archive.
+fn build_export_extras(
+    html_fragment: Option<String>,
+    session_id: &str,
+) -> Vec<(String, Vec<u8>)> {
+    let Some(fragment) = html_fragment else {
+        return Vec::new();
+    };
+    let rewritten = rewrite_for_offline(&fragment, session_id);
+    let index_html = wrap_offline_html(&rewritten);
+    vec![
+        ("index.html".to_string(), index_html.into_bytes()),
+        ("css/ar5iv.css".to_string(), AR5IV_CSS.to_vec()),
+        ("css/ar5iv-fonts.css".to_string(), AR5IV_FONTS_CSS.to_vec()),
+    ]
+}
+
+/// Inverse of `convert::rewrite_session_paths`: collapse
+/// `/api/session/{id}/files/<rel>` URLs back to relative `<rel>` so
+/// the exported `index.html` can find images / `\input`'d fragments
+/// next to itself when extracted offline.
+fn rewrite_for_offline(html: &str, session_id: &str) -> String {
+    let needle = format!("/api/session/{session_id}/files/");
+    html.replace(&needle, "")
+}
+
+/// Wrap a rendered fragment in a minimal HTML5 shell that links the
+/// ar5iv stylesheets we ship alongside it. Mirrors the live preview's
+/// shadow-root setup (`<div class="ltx_page_main">…</div>`) so the
+/// same selectors apply.
+fn wrap_offline_html(fragment: &str) -> String {
+    format!(
+        "<!DOCTYPE html>\n\
+<html lang=\"en\">\n\
+<head>\n\
+  <meta charset=\"utf-8\">\n\
+  <title>ar5iv export</title>\n\
+  <link rel=\"stylesheet\" href=\"css/ar5iv-fonts.css\">\n\
+  <link rel=\"stylesheet\" href=\"css/ar5iv.css\">\n\
+</head>\n\
+<body>\n\
+<article class=\"ltx_page_main\">\n\
+{fragment}\n\
+</article>\n\
+</body>\n\
+</html>\n"
+    )
 }
 
 async fn import_archive(

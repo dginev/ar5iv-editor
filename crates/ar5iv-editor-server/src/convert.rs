@@ -539,6 +539,7 @@ fn rewrite_session_paths(html: &str, session_dir: &std::path::Path, session_id: 
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicU32, AtomicU64};
 
     use crate::session::{SessionId, Slot, Token, UserId};
@@ -554,6 +555,7 @@ mod tests {
             bytes_used:    AtomicU64::new(0),
             file_count:    AtomicU32::new(0),
             version:       AtomicU64::new(0),
+            last_html:     Mutex::new(None),
         })
     }
 
