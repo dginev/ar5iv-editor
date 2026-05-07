@@ -966,13 +966,19 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
 .codemirror-host { flex: 1; min-height: 0; overflow: hidden; }
 .codemirror-host .cm-editor { height: 100%; }
 
-/* In the paper theme, override the bundled \`githubLight\` theme's pure-white
-   surface so the editor sits on the same cream as the rest of the chrome.
-   Specificity tied to the data-theme keeps midnight/terminal's One Dark
-   palette untouched. */
+/* In the paper theme, override the bundled `githubLight` theme's
+   pure-white surface so the editor sits on the same cream as the
+   rest of the chrome. Specificity tied to the data-theme keeps
+   midnight/terminal's One Dark palette untouched.
+   `.cm-content` is intentionally NOT included: the selection layer
+   is a sibling of `.cm-content` inside `.cm-scroller` and renders
+   beneath it, so giving `.cm-content` an opaque background covers
+   the highlight entirely. The colour set on `.cm-scroller` shows
+   through `.cm-content`'s default transparent fill. Selection
+   colours themselves are configured natively via
+   `EditorView.theme(...)` in `editor.ts` — no CSS override here. */
 :root[data-theme="paper"] .codemirror-host .cm-editor,
-:root[data-theme="paper"] .codemirror-host .cm-editor .cm-scroller,
-:root[data-theme="paper"] .codemirror-host .cm-editor .cm-content {
+:root[data-theme="paper"] .codemirror-host .cm-editor .cm-scroller {
   background-color: var(--bg-elev);
 }
 :root[data-theme="paper"] .codemirror-host .cm-editor .cm-gutters {

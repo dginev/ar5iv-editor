@@ -1,4 +1,4 @@
-import { EditorState, Compartment, type Extension } from "@codemirror/state";
+import { EditorState, Compartment, Prec, type Extension } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -95,6 +95,46 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
   const themeOf = (t: EditorTheme): Extension =>
     t === "dark" ? oneDark : githubLight;
 
+  // Selection visibility is set via `EditorView.theme(...)` rather
+  // than a global stylesheet override: the bundled themes
+  // (`oneDark`, `githubLight`) ship low-contrast selection colors
+  // (`#3e4451` over `#282c34` in oneDark, `#bbdfff` over white in
+  // githubLight) that read as invisible against our chrome surfaces.
+  // The values are accent-tinted via the chrome's `--accent` token
+  // so each chrome theme (paper / midnight / terminal) gets a hue
+  // that matches its palette.
+  //
+  // `!important` is required because both bundled themes inject
+  // their selection rules into the same head as ours; depending on
+  // mount order their `<style>` tag can end up later in the
+  // document and win the cascade at equal specificity. `!important`
+  // inside an `EditorView.theme(...)` spec is part of the CM theme
+  // API (it's how CM6 itself overrides browser-default
+  // `::selection` rules) so we stay within the framework rather
+  // than reaching outside it via global CSS.
+  const selectionTheme = EditorView.theme({
+    // Lift the selection layer above `.cm-content` (z auto) so the
+    // highlight paints over the bundled active-line background.
+    // Default CM6 puts the selection layer at z-index -2, which
+    // means an opaque `.cm-activeLine` backdrop occludes it. Cursor
+    // layer sits at z 100, so this still keeps the caret on top.
+    ".cm-selectionLayer": { zIndex: "1 !important" },
+    // Both focused AND unfocused paths set explicitly. The unfocused
+    // selector goes through `.cm-scroller > .cm-selectionLayer` so
+    // it has *more* classes than the bundled `.ͼ15 .cm-selectionLayer
+    // .cm-selectionBackground` rule it's competing with — without
+    // that, when the editor loses focus (e.g. the user clicks the
+    // chrome theme button), `.cm-focused` drops off `.cm-editor` and
+    // the focused selector stops matching, leaving the bundled
+    // light-blue selection rule to win on specificity.
+    "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground":
+      { backgroundColor: "color-mix(in srgb, var(--accent) 38%, transparent) !important" },
+    "& > .cm-scroller > .cm-selectionLayer .cm-selectionBackground":
+      { backgroundColor: "color-mix(in srgb, var(--accent) 38%, transparent) !important" },
+    ".cm-selectionMatch":
+      { backgroundColor: "color-mix(in srgb, var(--accent) 18%, transparent) !important" },
+  });
+
   const buildExtensions = (theme: EditorTheme): Extension[] => [
     lineNumbers(),
     // Lint plumbing — diagnostics are pushed from outside (the
@@ -121,6 +161,11 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
     latex({ enableLinting: false }),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     themeCompartment.of(themeOf(theme)),
+    // `Prec.highest` ensures our selection theme's `<style>` tag is
+    // injected after the bundled color theme's modules, winning the
+    // cascade at equal specificity. Without it, `@uiw/codemirror-
+    // theme-github`'s lazy modules mount last and override us.
+    Prec.highest(selectionTheme),
     keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
     EditorView.lineWrapping,
     EditorView.updateListener.of((u) => {
