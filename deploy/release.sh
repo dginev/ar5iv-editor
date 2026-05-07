@@ -52,8 +52,8 @@
 #     LATEXML_OXIDE_REF   — branch/tag/sha to build against
 #                           (default: master)
 #     IMAGE_BASE          — registry path without a tag
-#                           (default: ghcr.io/<owner>/ar5iv-editor,
-#                            owner inferred from origin url)
+#                           (default: ghcr.io/<owner>/<repo>/ar5iv-editor,
+#                            inferred from `git remote get-url origin`)
 #     SMOKE_PORT          — host port for the smoke test container
 #                           (default: 3210)
 
@@ -113,8 +113,14 @@ done
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LATEXML_PATH="${LATEXML_PATH:-$(cd "$REPO_ROOT/.." && pwd)/latexml-oxide}"
 LATEXML_OXIDE_REF="${LATEXML_OXIDE_REF:-master}"
+# Match `build-and-push.sh`'s IMAGE convention exactly:
+# `ghcr.io/<owner>/<repo>/ar5iv-editor:tag` — three path segments,
+# the last one a literal `ar5iv-editor`. GHCR organises packages
+# under a repo, and the box's docker-compose pulls from this path,
+# so any divergence here means we'd push to a different package
+# than what the deploy is configured to fetch (silent footgun).
 IMAGE_BASE="${IMAGE_BASE:-ghcr.io/$(git -C "$REPO_ROOT" config --get remote.origin.url \
-    | sed -E 's|.*[:/]([^/]+/[^/.]+)(\.git)?$|\1|')}"
+    | sed -E 's|.*[:/]([^/]+/[^/.]+)(\.git)?$|\1|')/ar5iv-editor}"
 SMOKE_PORT="${SMOKE_PORT:-3210}"
 
 for tool in docker curl jq git awk sed; do
