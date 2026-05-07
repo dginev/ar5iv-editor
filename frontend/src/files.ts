@@ -51,6 +51,85 @@ export class FilePanel {
     this.active = opts.session.envelope.entry || null;
     this.renderActions();
     this.render();
+    this.installDragAndDrop();
+  }
+
+  /** Wire drag-and-drop onto the file panel so users can drop an
+   *  archive (.zip / .tar.gz / .tgz), loose files, or a *folder*
+   *  straight onto it. Folder drops are walked via
+   *  `DataTransferItem.webkitGetAsEntry()` — that enumeration is
+   *  lazy/async, unlike `<input webkitdirectory>` which blocks the
+   *  UI thread on a synchronous walk. Each enumerated file is
+   *  tagged with a `webkitRelativePath` so the server preserves the
+   *  folder hierarchy. */
+  private installDragAndDrop(): void {
+    const target = this.opts.treeEl.parentElement ?? this.opts.treeEl;
+    // `.pane-files` is `height: calc(100vh - var(--header-h))`, so
+    // its hit-area already spans the entire sidebar — including the
+    // empty space below the tree. We still pin a `min-height` on the
+    // tree itself so the visible drop affordance feels intentional
+    // when only a few rows are present.
+    this.opts.treeEl.style.minHeight = "calc(100vh - var(--header-h) - 4rem)";
+
+    // Track drag enter/leave with a depth counter — without it,
+    // moving the pointer over any child element (a button, a tree
+    // row) fires a dragleave on the parent, which would otherwise
+    // flicker the highlight off and on. The class only comes off
+    // when the depth returns to zero.
+    let dragDepth = 0;
+    const isFilesDrag = (e: DragEvent) =>
+      !!e.dataTransfer?.types.includes("Files");
+    const onEnter = (e: DragEvent) => {
+      if (!isFilesDrag(e)) return;
+      e.preventDefault();
+      dragDepth++;
+      target.classList.add("pane-files--drop");
+    };
+    const onOver = (e: DragEvent) => {
+      // Drop only fires on a target whose dragover handler called
+      // preventDefault — without this the browser interprets the
+      // gesture as "open this file in a new tab".
+      if (isFilesDrag(e)) e.preventDefault();
+    };
+    const onLeave = (e: DragEvent) => {
+      if (!isFilesDrag(e)) return;
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) target.classList.remove("pane-files--drop");
+    };
+    const onDrop = async (e: DragEvent) => {
+      dragDepth = 0;
+      target.classList.remove("pane-files--drop");
+      if (!e.dataTransfer) return;
+      e.preventDefault();
+      // Prefer `items` so we can detect directory entries; fall
+      // back to `files` whenever the entry API isn't available *or*
+      // returns nothing useful (synthetic drops, certain edge
+      // cases). The `files` path can't preserve subdirectory layout,
+      // so we only fall through to it when `items` produces no
+      // entries.
+      const items = Array.from(e.dataTransfer.items ?? []);
+      const fileItems = items.filter((it) => it.kind === "file");
+      if (fileItems.length > 0 && "webkitGetAsEntry" in fileItems[0]) {
+        const entries: FileSystemEntry[] = [];
+        for (const it of fileItems) {
+          const entry = (it as DataTransferItem & {
+            webkitGetAsEntry: () => FileSystemEntry | null;
+          }).webkitGetAsEntry();
+          if (entry) entries.push(entry);
+        }
+        if (entries.length > 0) {
+          const collected = await readEntriesAsFiles(entries);
+          if (collected.length > 0) void this.actionUploadFiles(collected);
+          return;
+        }
+      }
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length > 0) void this.actionUploadFiles(files);
+    };
+    target.addEventListener("dragenter", onEnter);
+    target.addEventListener("dragover", onOver);
+    target.addEventListener("dragleave", onLeave);
+    target.addEventListener("drop", onDrop);
   }
 
   setActiveFile(path: string | null): void {
@@ -66,7 +145,12 @@ export class FilePanel {
     this.render();
   }
 
-  /** Refresh the file list from the server (e.g., after an upload). */
+  /** Refresh the file list from the server (e.g. after an upload or
+   *  a delete) and, if the session was previously empty, auto-open a
+   *  sensible default in the editor. Does NOT trigger a convert —
+   *  callers that mutated the file set (upload, delete, clear, new
+   *  file) are responsible for calling `requestPreview()` after this
+   *  resolves; pure file-switch interactions don't need to. */
   async refresh(): Promise<void> {
     try {
       const listing = await this.opts.session.listFiles();
@@ -75,6 +159,15 @@ export class FilePanel {
         files: listing.files,
       };
       this.render();
+      // Auto-open a sensible default after the first upload into a
+      // previously-empty session (the "New Project" flow). Skipped
+      // when something is already active so a refresh after a
+      // mid-session upload doesn't yank the editor out from under
+      // the user.
+      if (this.active === null) {
+        const candidate = pickPostUploadEntry(listing.files);
+        if (candidate !== null) await this.openFile(candidate);
+      }
     } catch (e) {
       if (e instanceof SessionExpiredError) {
         sessionExpiredCard();
@@ -134,18 +227,25 @@ export class FilePanel {
       });
       li.appendChild(row);
 
-      // Per-row kebab — Download only in v1.2 (per Non-goals).
-      if (!n.isDir) {
-        const kebab = document.createElement("a");
-        kebab.className = "ftree-kebab";
-        kebab.href = this.opts.session.fileUrl(n.path);
-        kebab.title = "Download this file";
-        kebab.textContent = "dl";
-        // Force download with a sensible filename.
-        kebab.download = n.name;
-        kebab.addEventListener("click", (e) => e.stopPropagation());
-        li.appendChild(kebab);
-      }
+      // Hover-revealed delete affordance — a small red ✕ floated to
+      // the right of every row (file or directory). Clicking it asks
+      // for confirmation; on accept the path is unlinked server-side
+      // (recursive for directories) and the panel re-renders. The
+      // listener stops propagation so the row's click doesn't fire
+      // an open / collapse alongside the delete.
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "ftree-delete";
+      del.title = n.isDir
+        ? `Delete folder “${n.name}” and all of its contents`
+        : `Delete file “${n.name}”`;
+      del.setAttribute("aria-label", del.title);
+      del.textContent = "✕";
+      del.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void this.actionDelete(n);
+      });
+      li.appendChild(del);
 
       parent.appendChild(li);
 
@@ -186,13 +286,15 @@ export class FilePanel {
   private renderActions(): void {
     this.opts.actionsEl.replaceChildren();
 
-    const newFileBtn = makeTextButton("new", "Create a new file");
-    newFileBtn.addEventListener("click", () => void this.actionNewFile());
-    this.opts.actionsEl.appendChild(newFileBtn);
+    const createBtn = makeTextButton("create", "Create a new file");
+    createBtn.addEventListener("click", () => void this.actionNewFile());
+    this.opts.actionsEl.appendChild(createBtn);
 
     const uploadBtn = makeTextButton(
       "upload",
-      "Upload a folder (recursively; preserves directory structure)",
+      "Click to pick files or a .zip / .tar.gz archive. " +
+      "Drag-and-drop a folder, files, or archive onto the file panel " +
+      "for full directory uploads.",
     );
     uploadBtn.addEventListener("click", () => this.triggerUpload());
     this.opts.actionsEl.appendChild(uploadBtn);
@@ -203,23 +305,102 @@ export class FilePanel {
     );
     downloadBtn.addEventListener("click", () => void this.actionDownload());
     this.opts.actionsEl.appendChild(downloadBtn);
+
+    const clearBtn = makeTextButton(
+      "clear",
+      "Delete every file in this project (cannot be undone)",
+    );
+    clearBtn.classList.add("pane-action--destructive");
+    clearBtn.addEventListener("click", () => void this.actionClear());
+    this.opts.actionsEl.appendChild(clearBtn);
   }
 
   private triggerUpload(): void {
     const input = document.createElement("input");
     input.type = "file";
-    // `webkitdirectory` is the de-facto standard (Chrome/Edge/Safari/
-    // Firefox all support it). Picks an entire folder; the browser
-    // walks the tree and posts every file with `webkitRelativePath`
-    // set, so subdirectory layout is preserved server-side.
-    (input as HTMLInputElement & { webkitdirectory?: boolean }).webkitdirectory = true;
     input.multiple = true;
+    // Deliberately NOT using `webkitdirectory`: Chrome's directory
+    // picker enumerates the chosen folder synchronously on the UI
+    // thread before returning a FileList. Picking ~/Downloads (or
+    // any big tree) freezes the tab. We split modes by *gesture*
+    // instead — click here gets a regular file picker (archives +
+    // loose files), drag-and-drop on the panel handles directories
+    // via `DataTransferItem.webkitGetAsEntry`, which enumerates
+    // lazily off the main thread.
     input.addEventListener("change", () => {
       const files = Array.from(input.files ?? []);
       if (files.length === 0) return;
       void this.actionUploadFiles(files);
     });
     input.click();
+  }
+
+  private async actionClear(): Promise<void> {
+    const fileCount = this.opts.session.envelope.files.filter(
+      (f) => f.kind !== "dir",
+    ).length;
+    if (fileCount === 0) {
+      // Nothing to clear — give the user feedback rather than firing
+      // a no-op DELETE that they'd never notice succeeded.
+      this.opts.reportError("project is already empty");
+      return;
+    }
+    const ok = window.confirm(
+      `Delete every file in this project (${fileCount})?\n\n` +
+      `This cannot be undone. The session itself stays open — you can ` +
+      `keep editing or upload a new folder once the slate is clean.`,
+    );
+    if (!ok) return;
+    try {
+      await this.opts.session.clearFiles();
+      // Update the local envelope to the now-empty state, then route
+      // through `onSessionSwap` so main.ts drops the editor's buffers,
+      // resets `activePath`, and re-renders the empty tree. The
+      // session id stays — we're explicitly not minting a new one.
+      this.opts.session.envelope = {
+        ...this.opts.session.envelope,
+        files: [],
+        entry: "",
+      };
+      this.opts.onSessionSwap(this.opts.session.envelope);
+    } catch (e) {
+      if (e instanceof SessionExpiredError) {
+        sessionExpiredCard();
+        return;
+      }
+      this.opts.reportError(`clear failed: ${e}`);
+    }
+  }
+
+  private async actionDelete(node: TreeNode): Promise<void> {
+    const noun = node.isDir ? "folder (and all of its contents)" : "file";
+    const ok = window.confirm(
+      `Delete ${noun} “${node.path}”?\n\nThis cannot be undone.`,
+    );
+    if (!ok) return;
+    try {
+      await this.opts.session.deletePath(node.path);
+      // If the active file disappeared underneath us, drop the editor's
+      // claim on it so subsequent renders don't highlight a phantom
+      // and `refresh()` auto-opens whatever the new main pick is.
+      if (this.active === node.path
+          || (node.isDir && this.active?.startsWith(node.path + "/"))) {
+        this.active = null;
+      }
+      // The file set changed — fire one convert against the new
+      // disk state. Switching the editor's active buffer (which
+      // refresh() may do as part of the auto-open) does NOT itself
+      // trigger a convert anymore, so this single requestPreview is
+      // the entire conversion event for the delete.
+      await this.refresh();
+      this.opts.requestPreview();
+    } catch (e) {
+      if (e instanceof SessionExpiredError) {
+        sessionExpiredCard();
+        return;
+      }
+      this.opts.reportError(`delete ${node.path} failed: ${e}`);
+    }
   }
 
   private async actionNewFile(): Promise<void> {
@@ -270,6 +451,10 @@ export class FilePanel {
         throw new Error(`upload failed: ${resp.status} ${txt}`);
       }
       const ack = (await resp.json().catch(() => ({}))) as { skipped?: string[] };
+      // The file set changed — refresh the panel, then fire one
+      // convert. Auto-opening a file in the editor (which refresh
+      // may do for an empty session) does NOT itself trigger a
+      // convert; this is the only conversion event for the upload.
       await this.refresh();
       this.opts.requestPreview();
       if (ack.skipped && ack.skipped.length > 0) {
@@ -310,6 +495,20 @@ export class FilePanel {
 // Helpers.
 // -----------------------------------------------------------------------
 
+/** Pick a default file to open right after the first upload into a
+ *  fresh session. Restricted to `.tex` because the auto-open feeds
+ *  straight into a convert request — landing on a `00README.json`
+ *  (left behind from an arXiv unpack) or some other non-source text
+ *  file would dispatch the engine on content it can't parse, which
+ *  surfaces as bogus diagnostics in the preview. Returns `null` when
+ *  there's no `.tex` to render; the user can still click any file
+ *  manually, the editor just won't auto-attach to one. */
+function pickPostUploadEntry(files: FileMeta[]): string | null {
+  const main = files.find((f) => f.kind === "text" && f.path === "main.tex");
+  if (main) return main.path;
+  return files.find((f) => f.kind === "text" && f.path.endsWith(".tex"))?.path ?? null;
+}
+
 /** Common copy for the "your tmpdir was swept" fatal card. The card is
  *  idempotent — multiple callers racing to surface the same condition
  *  collapse onto a single overlay. */
@@ -330,6 +529,50 @@ function formatSkippedMessage(skipped: string[]): string {
   const more = skipped.length > max ? `, +${skipped.length - max} more` : "";
   const noun = skipped.length === 1 ? "file" : "files";
   return `Skipped ${skipped.length} ${noun} with unsupported extensions\n${head.join(", ")}${more}`;
+}
+
+/** Recursively flatten a list of `FileSystemEntry` (from a drag-drop
+ *  `webkitGetAsEntry()` walk) into a flat list of `File`s, each with
+ *  a synthetic `webkitRelativePath` so the server preserves the
+ *  folder hierarchy. Mirrors what `<input webkitdirectory>` posts —
+ *  but the walk is async/lazy via the file system entry API, so
+ *  dropping a giant tree doesn't block the UI thread. */
+async function readEntriesAsFiles(
+  entries: FileSystemEntry[],
+  pathPrefix = "",
+): Promise<File[]> {
+  const out: File[] = [];
+  for (const entry of entries) {
+    if (entry.isFile) {
+      const file = await new Promise<File>((resolve, reject) => {
+        (entry as FileSystemFileEntry).file(resolve, reject);
+      });
+      const rel = pathPrefix ? `${pathPrefix}/${file.name}` : file.name;
+      // Force `webkitRelativePath` on the synthetic File — `actionUploadFiles`
+      // reads it to build the multipart filename, exactly as it does for
+      // <input webkitdirectory>.
+      Object.defineProperty(file, "webkitRelativePath", {
+        configurable: true,
+        value: rel,
+      });
+      out.push(file);
+    } else if (entry.isDirectory) {
+      const reader = (entry as FileSystemDirectoryEntry).createReader();
+      const collected: FileSystemEntry[] = [];
+      for (;;) {
+        // `readEntries` is paginated: it returns at most ~100 entries
+        // per call, so we loop until it returns an empty batch.
+        const batch = await new Promise<FileSystemEntry[]>(
+          (resolve, reject) => reader.readEntries(resolve, reject),
+        );
+        if (batch.length === 0) break;
+        collected.push(...batch);
+      }
+      const sub = pathPrefix ? `${pathPrefix}/${entry.name}` : entry.name;
+      out.push(...(await readEntriesAsFiles(collected, sub)));
+    }
+  }
+  return out;
 }
 
 function buildTree(files: FileMeta[]): TreeNode[] {
@@ -383,7 +626,7 @@ function makeTextButton(label: string, title: string): HTMLButtonElement {
 function isEditableExtension(path: string): boolean {
   const ext = path.includes(".") ? path.slice(path.lastIndexOf(".") + 1).toLowerCase() : "";
   return [
-    "tex", "sty", "cls", "bib", "bst", "bbl",
+    "tex", "sty", "cls", "bib", "bst", "bbl", "def", "ldf",
     "txt", "md", "csv", "toml", "json", "yaml", "yml", "svg",
   ].includes(ext);
 }

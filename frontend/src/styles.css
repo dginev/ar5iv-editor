@@ -302,6 +302,15 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
 .pane-files {
   border-right: 1px solid var(--rule);
   background: var(--bg-sunken);
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+/* Visual cue while a drag is hovering over the file panel — applied
+   in `installDragAndDrop`. The accent-tinted bg + inner ring tells
+   the user "drop here lands in your project" without obscuring the
+   tree contents. */
+.pane-files--drop {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-sunken));
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 .pane-source { border-right: 1px solid var(--rule); }
 .pane-preview {
@@ -335,6 +344,65 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
 }
 .resizer:focus-visible { outline: none; }
 
+/* Centered chevron toggle that collapses / expands the pane on the
+   left of this resizer. Anchored to the vertical midpoint and
+   slightly wider than the resizer's 4-px slot so the click target is
+   comfortable. Sits *on top of* the resizer; pointerdown stops
+   propagation in JS so a click here doesn't seed a drag. */
+.resizer { position: relative; }
+.resizer__toggle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--bg-elev);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  opacity: 0.55;
+  transition: opacity 0.12s ease, color 0.12s ease,
+              border-color 0.12s ease, background-color 0.12s ease;
+}
+.resizer:hover .resizer__toggle,
+.resizer__toggle:focus-visible,
+.resizer__toggle--collapsed {
+  opacity: 1;
+}
+.resizer__toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 10%, var(--bg-elev));
+}
+.resizer__toggle:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .resizer__toggle { transition: none; }
+}
+
+/* When a pane is collapsed the grid track shrinks to 0 but its
+   border-right is still painted; clip the contents so half-borders
+   don't bleed into the neighbour. The resizer column stays visible
+   so the chevron is always reachable to expand again. */
+.ar5iv-editor-shell--files-collapsed .pane-files,
+.ar5iv-editor-shell--source-collapsed .pane-source {
+  overflow: hidden;
+  border-right: none;
+}
+
 /* File panel (Phase 3 stub; Phase 5 fills in the FileTree). */
 .pane-title {
   text-transform: uppercase;
@@ -345,30 +413,68 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
 }
 /* Header actions follow the same terminal-strip aesthetic as the
    timings panel and the latexml-oxide version marker on the right:
-   monospace, small, muted-by-default, accent on hover. No emoji,
-   no boxed-button affordance — they read as inline labels.
-   Sized to harmonise with `.preview-version` (0.72rem mono).
-   Tight gap so the five labels fit a 14 rem panel even with the
-   tightest action wording. */
-.pane-actions { display: inline-flex; gap: 0.65rem; align-items: baseline; flex: 1; justify-content: flex-end; }
+   monospace, small, muted-by-default, accent on hover. Each is a
+   real `<button>` with a subtle outlined affordance — visible at
+   rest so the user knows what's clickable, accent-colored on hover.
+   Tight padding keeps the four labels inside a ~16 rem panel. */
+.pane-actions {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex: 1;
+  justify-content: flex-end;
+}
 .pane-actions button {
   background: transparent;
-  border: none;
-  color: var(--ink-muted);
-  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  color: var(--ink-soft);
+  padding: 0.12rem 0.42rem;
   font-family: var(--mono);
   font-size: 0.72rem;
   letter-spacing: 0.02em;
+  line-height: 1.15;
   cursor: pointer;
   white-space: nowrap;
+  transition: border-color 0.12s ease, color 0.12s ease,
+              background-color 0.12s ease;
 }
 .pane-actions button:not(:disabled):hover {
   color: var(--accent);
-  text-decoration: underline;
+  border-color: var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.pane-actions button:not(:disabled):focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.pane-actions button:not(:disabled):active {
+  background-color: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 .pane-actions button:disabled {
-  opacity: 0.4;
+  opacity: 0.45;
   cursor: not-allowed;
+}
+/* Destructive header action ("clear") — same muted resting state as
+   the others so the chrome stays calm, but the border + glyph go red
+   on hover so the user gets a visual stop-sign before opening the
+   confirm dialog. Uses the same `--bad` token as the per-row delete
+   glyph for consistency. */
+.pane-actions button.pane-action--destructive:not(:disabled):hover {
+  color: var(--bad);
+  border-color: var(--bad);
+  background-color: color-mix(in srgb, var(--bad) 8%, transparent);
+}
+.pane-actions button.pane-action--destructive:not(:disabled):active {
+  background-color: color-mix(in srgb, var(--bad) 16%, transparent);
+}
+.pane-actions button.pane-action--destructive:not(:disabled):focus-visible {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bad) 28%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane-actions button { transition: none; }
 }
 .file-tree {
   flex: 1;
@@ -440,25 +546,41 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Per-row download link in the same mono-muted aesthetic as
-   the header actions; slides in only on hover or for the active row. */
-.ftree-kebab {
+/* Per-row delete (red ✕) floated to the right edge of the row.
+   Hidden by default; shown on row hover (and while focused for
+   keyboard users). Sits in the row's flex layout via `margin-left:
+   auto`, so it ends up flush right without absolute positioning. */
+.ftree-delete {
   flex: 0 0 auto;
-  text-decoration: none;
-  color: var(--ink-muted);
-  padding: 0 0.3rem;
+  margin-left: auto;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--bad);
   font-family: var(--mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.02em;
-  visibility: hidden;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0.15rem 0.45rem;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease;
 }
-.ftree-row:hover .ftree-kebab,
-.ftree-row--active .ftree-kebab {
-  visibility: visible;
+.ftree-row:hover .ftree-delete,
+.ftree-row:focus-within .ftree-delete,
+.ftree-delete:focus-visible {
+  opacity: 1;
 }
-.ftree-kebab:hover {
-  color: var(--accent);
-  text-decoration: underline;
+.ftree-delete:hover {
+  background: color-mix(in srgb, var(--bad) 18%, transparent);
+}
+.ftree-delete:focus-visible {
+  outline: 2px solid var(--bad);
+  outline-offset: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ftree-delete {
+    transition: none;
+  }
 }
 
 /* -------- binary-file metadata stub (replaces the editor when a
@@ -868,6 +990,48 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
   flex: 1;
   min-height: 0;
   background: var(--bg-elev);
+  position: relative;
+}
+/* Loading watermark: a faint diagonal stripe overlay shown while a
+   convert request is in flight. Lives on the host element (not in the
+   shadow root) so it sits above the morphed preview content without
+   participating in idiomorph's diff. The stripes are tuned to register
+   in peripheral vision but stay readable for anyone trying to skim
+   the previous render while the new one boots. */
+.preview::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent 0,
+    transparent 14px,
+    color-mix(in srgb, var(--ink) 7%, transparent) 14px,
+    color-mix(in srgb, var(--ink) 7%, transparent) 28px
+  );
+}
+.preview--loading::before {
+  opacity: 1;
+}
+/* Page-wide spinner cursor while a convert is in flight. Mirrors the
+   diagonal-stripe watermark on the preview pane: tells the user the
+   system is alive and working, even when their pointer is parked over
+   the editor or file panel. `cursor: progress` (vs `wait`) is the
+   spec's "background work, UI still interactive" choice — accurate
+   here, because the editor and file panel keep responding. The
+   universal selector + !important is necessary because nearly every
+   interactive child sets its own cursor (button → pointer, .cm-content
+   → text, etc.); without it the spinner only shows over inert chrome. */
+body.converting,
+body.converting * {
+  cursor: progress !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .preview::before { transition: none; }
 }
 .log {
   /* The conversion log can be much longer than the viewport; keeping

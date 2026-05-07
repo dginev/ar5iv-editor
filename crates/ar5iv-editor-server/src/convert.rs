@@ -556,6 +556,7 @@ mod tests {
             file_count:    AtomicU32::new(0),
             version:       AtomicU64::new(0),
             last_html:     Mutex::new(None),
+            main_entry:    Mutex::new(None),
         })
     }
 

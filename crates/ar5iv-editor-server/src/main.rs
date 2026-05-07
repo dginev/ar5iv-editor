@@ -6,6 +6,7 @@ use ar5iv_editor::{
     session::SessionRegistry,
 };
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::info;
 
 #[tokio::main]
@@ -54,8 +55,20 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // The library default uses `frontend/dist`; if the user pointed elsewhere
-    // via env, layer a fresh ServeDir on top.
-    let app = router(state.clone()).nest_service("/static", ServeDir::new(&cfg.static_dir));
+    // via env, layer a fresh ServeDir on top. The `Cache-Control: no-cache`
+    // header forces the browser to revalidate `main.js` / `style.css` etc.
+    // against the server every load — without it Chrome's heuristic cache
+    // can pin an old `main.js` long enough that a `cargo run` cycle ships
+    // new server behavior while the browser is still running last week's
+    // bundle. `no-cache` (revalidate, not "no-store") still allows 304s
+    // when nothing changed, so warm reloads stay cheap.
+    let static_service = ServeDir::new(&cfg.static_dir);
+    let app = router(state.clone())
+        .nest_service("/static", static_service)
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-cache"),
+        ));
 
     let listener = tokio::net::TcpListener::bind(cfg.bind)
         .await

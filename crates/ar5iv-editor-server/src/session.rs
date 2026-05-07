@@ -188,6 +188,14 @@ pub struct Session {
     /// (i.e., session-dir absolute paths already mapped to
     /// `/api/session/{id}/files/...`).
     pub last_html:     Mutex<Option<String>>,
+    /// Path of the project's main `.tex` entrypoint, relative to
+    /// `dir` and using forward slashes. The convert worker reads this
+    /// instead of the WS request's `active_file`, so editing
+    /// `chapter1.tex` still re-renders the document from `main.tex`
+    /// (or whatever `latexml::main_tex::find_main_tex` picks for the
+    /// current file set). Recomputed lazily by `refresh_main_entry`
+    /// on session creation and after every file-set mutation.
+    pub main_entry:    Mutex<Option<String>>,
 }
 
 impl Session {
@@ -199,6 +207,46 @@ impl Session {
         // Returns the *new* version (post-increment) so callers can
         // include it in their response payload.
         self.version.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Re-run latexml-oxide's directory-mode main-entry heuristic and
+    /// refresh the cached `main_entry`. Cheap on small sessions
+    /// (handful of `.tex` files); skip-on-error so a transient
+    /// detection failure (e.g. a half-uploaded source tree) leaves
+    /// the prior pick in place. Callers fire this after any
+    /// PUT / upload / mkdir / rename / delete that may have changed
+    /// the file set, plus once at session-creation time.
+    pub fn refresh_main_entry(&self) {
+        let picked = match latexml::main_tex::find_main_tex(&self.dir) {
+            Ok(abs) => {
+                // Don't trust the heuristic blindly. `find_main_tex`
+                // honours `00README.json`'s `toplevelfile` field —
+                // arXiv submissions ship with that file, and the
+                // listed entry can be stale relative to the live file
+                // tree (e.g. the user deleted the original main.tex
+                // but the README still names it). Validate that the
+                // picked path actually exists on disk before caching.
+                if abs.exists() {
+                    abs.strip_prefix(&self.dir)
+                        .ok()
+                        .map(|p| p.to_string_lossy().replace('\\', "/"))
+                } else {
+                    debug!(session = %self.id, "find_main_tex picked {} but it does not exist on disk", abs.display());
+                    None
+                }
+            },
+            Err(msg) => {
+                debug!(session = %self.id, "find_main_tex: {msg}");
+                None
+            },
+        };
+        // Always update the cache — Some when we found a real main,
+        // None when we couldn't. Previously we only wrote on Some,
+        // which meant a deletion that emptied the .tex set left the
+        // cache pointing at the now-missing file forever.
+        if let Ok(mut slot) = self.main_entry.lock() {
+            *slot = picked;
+        }
     }
 
     /// Resolve a user-supplied relative path inside the session dir.
@@ -422,7 +470,14 @@ impl SessionRegistry {
             file_count:    AtomicU32::new(file_count),
             version:       AtomicU64::new(0),
             last_html:     Mutex::new(None),
+            main_entry:    Mutex::new(None),
         });
+        // Pick the project's main `.tex` from whatever the seed laid
+        // down. For example slots this matches the manifest's `entry`;
+        // for blank slots it lands on `main.tex`; for upload-archive
+        // slots it runs the same heuristic the standalone binary uses
+        // under `--whatsin=directory`.
+        session.refresh_main_entry();
 
         // Re-lock to insert. Race window: another caller for the same
         // (user, slot) may have completed in the meantime; if so, drop
@@ -655,6 +710,7 @@ mod tests {
             file_count:    AtomicU32::new(0),
             version:       AtomicU64::new(0),
             last_html:     Mutex::new(None),
+            main_entry:    Mutex::new(None),
         }
     }
 }

@@ -88,7 +88,7 @@ async fn handle_socket(socket: WebSocket, state: AppState, session: Arc<Session>
         session.touch();
         match msg {
             Message::Text(text) => {
-                let req: ConvertRequest = match serde_json::from_str(text.as_str()) {
+                let mut req: ConvertRequest = match serde_json::from_str(text.as_str()) {
                     Ok(r) => r,
                     Err(e) => {
                         let _ = resp_tx
@@ -98,6 +98,23 @@ async fn handle_socket(socket: WebSocket, state: AppState, session: Arc<Session>
                     }
                 };
                 let id = req.id;
+                // Always render the project's main entrypoint (whatever
+                // `latexml::main_tex::find_main_tex` picked at session
+                // create / last file-set change), regardless of which
+                // file the user is currently editing in the panel. Sub-
+                // files reach the engine through `\input` resolution
+                // off the session dir; converting them in isolation
+                // produces preamble-less garbage. Falls back to the
+                // request's `active_file` only if we never managed to
+                // detect a main entry (e.g. an empty session).
+                if let Some(main) = session
+                    .main_entry
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone())
+                {
+                    req.active_file = main;
+                }
 
                 if let Some(prev) = active_cancel.take() {
                     let _ = prev.send(());

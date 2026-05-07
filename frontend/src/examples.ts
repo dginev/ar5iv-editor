@@ -57,8 +57,16 @@ export interface ExampleEntry extends ExampleManifestEntry {
 export const EXAMPLES_LIST: ExampleEntry[] = manifest.examples
   .filter((e) => !e.disabled)
   .map((e) => {
-    const source = e.archive ? null : lookup(e.slug, e.entry);
-    if (source === null && !e.archive) {
+    // Three flavours surface here:
+    //  - archive-bearing entries: server unpacks at slot-create, no
+    //    client-side body needed.
+    //  - empty-entry pseudo-slots (e.g. "new"): seed nothing on the
+    //    server; the dropdown just routes the slot switch.
+    //  - everything else: eagerly inline the .tex source so the
+    //    legacy direct-load shim still works.
+    const isPseudo = !e.archive && e.entry === "";
+    const source = e.archive || isPseudo ? null : lookup(e.slug, e.entry);
+    if (source === null && !e.archive && !isPseudo) {
       throw new Error(`example source not found: ${e.slug}/${e.entry}`);
     }
     return { ...e, source };

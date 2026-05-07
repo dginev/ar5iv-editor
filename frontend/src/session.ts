@@ -39,6 +39,11 @@ export interface WriteAck {
   version: number;
 }
 
+export interface OkAck {
+  ok:      boolean;
+  version: number;
+}
+
 export class SessionExpiredError extends Error {
   constructor() {
     super("session_expired");
@@ -91,11 +96,30 @@ export class SessionClient {
   static async open(): Promise<SessionClient> {
     const user = await ensureUserId();
     const slot = readSlot();
-    const env = await callJson<SessionEnvelope>(
-      "/api/session",
-      { method: "POST", body: JSON.stringify({ slot }) },
-      user,
-    );
+    let env: SessionEnvelope;
+    try {
+      env = await callJson<SessionEnvelope>(
+        "/api/session",
+        { method: "POST", body: JSON.stringify({ slot }) },
+        user,
+      );
+    } catch (e) {
+      // The slot persisted in `sessionStorage` may have been removed
+      // from the manifest under us (e.g. the legacy "new" pseudo-slot
+      // that became the file-panel "clear" button in v0.3). Wipe the
+      // stored slot and fall back to Blank so the page still loads
+      // instead of error-toasting on every reload.
+      if (slot !== "blank") {
+        sessionStorage.removeItem(SS_SLOT);
+        env = await callJson<SessionEnvelope>(
+          "/api/session",
+          { method: "POST", body: JSON.stringify({ slot: "blank" }) },
+          user,
+        );
+      } else {
+        throw e;
+      }
+    }
     writeSlot(env.slot);
     return new SessionClient(user, env);
   }
@@ -145,6 +169,31 @@ export class SessionClient {
     return await callJson<FileListing>(
       `/api/session/${this.envelope.id}/files`,
       { method: "GET" },
+      this.userId,
+    );
+  }
+
+  /** Remove a file or directory inside the session. The server's
+   *  DELETE handler is recursive on directories (`remove_dir_all`),
+   *  so the caller can pass either a leaf or a folder path and the
+   *  whole subtree is unlinked. */
+  async deletePath(path: string): Promise<OkAck> {
+    return await callJson<OkAck>(
+      this.fileUrl(path),
+      { method: "DELETE" },
+      this.userId,
+    );
+  }
+
+  /** Wipe every file in the session, keeping the session id itself
+   *  alive. Backs the file panel's "clear" button. The server resets
+   *  file count / bytes used / cached preview / main-entry pick;
+   *  callers must clear local UI state (editor buffers, active path)
+   *  to match. */
+  async clearFiles(): Promise<OkAck> {
+    return await callJson<OkAck>(
+      `/api/session/${this.envelope.id}/files`,
+      { method: "DELETE" },
       this.userId,
     );
   }

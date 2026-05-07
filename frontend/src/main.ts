@@ -19,7 +19,7 @@ const DEBOUNCE_MS = 300;
 type ChromeTheme = "paper" | "midnight" | "terminal";
 
 const TEXT_EXTENSIONS = new Set([
-  "tex", "sty", "cls", "bib", "bst", "bbl",
+  "tex", "sty", "cls", "bib", "bst", "bbl", "def", "ldf",
   "txt", "md", "csv", "toml", "json", "yaml", "yml", "svg",
 ]);
 
@@ -171,6 +171,19 @@ function isTextPath(path: string): boolean {
   const dot = path.lastIndexOf(".");
   if (dot < 0) return false;
   return TEXT_EXTENSIONS.has(path.slice(dot + 1).toLowerCase());
+}
+
+/** Pick the file the editor should show right after a fresh
+ *  `SessionEnvelope` arrives (initial bootstrap, slot switch, swap).
+ *  Returns `null` when the session is genuinely empty (the "New
+ *  Project" slot, or a slot whose only example has no usable text
+ *  files) — callers must skip the GET in that case. Falls back to
+ *  the envelope's `entry` hint, then to whatever text file is first
+ *  in the listing. */
+function pickInitialActivePath(env: SessionEnvelope): string | null {
+  if (env.files.length === 0) return null;
+  if (env.entry) return env.entry;
+  return env.files.find((f) => f.kind === "text")?.path ?? null;
 }
 
 function fmtBytes(n: number): string {
@@ -350,8 +363,10 @@ async function main(): Promise<void> {
   // `version`. When `activePath` points at a binary, the editor is
   // hidden and the metadata stub is shown instead — convert frames
   // are silently no-ops in that mode (we don't rerun the engine just
-  // because the user clicked a graphic).
-  let activePath: string | null = session.envelope.entry || "main.tex";
+  // because the user clicked a graphic). `null` while the session
+  // has no files yet (e.g. the "New Project" slot before the first
+  // upload) — the UI sits idle until something lands in the tree.
+  let activePath: string | null = pickInitialActivePath(session.envelope);
   let lastVersion = 0;
 
   async function setActiveFile(path: string): Promise<void> {
@@ -472,14 +487,16 @@ async function main(): Promise<void> {
     applyHeaderBadge(unanchored);
   }
 
-  try {
-    await setActiveFile(activePath);
-  } catch (e) {
-    if (e instanceof SessionExpiredError) {
-      await session.reopen();
-    } else {
-      console.error("initial GET failed", e);
-      showToast(`Could not load ${activePath}: ${e}`, "error");
+  if (activePath !== null) {
+    try {
+      await setActiveFile(activePath);
+    } catch (e) {
+      if (e instanceof SessionExpiredError) {
+        await session.reopen();
+      } else {
+        console.error("initial GET failed", e);
+        showToast(`Could not load ${activePath}: ${e}`, "error");
+      }
     }
   }
 
@@ -489,19 +506,112 @@ async function main(): Promise<void> {
   let client: ConvertClient | null = null;
   let latestSeenId = 0;
   const sentAt = new Map<number, number>();
+  /** Toggle every "convert in flight" affordance based on
+   *  `sentAt.size`: the preview-pane diagonal-stripe watermark and a
+   *  page-wide `progress` cursor on the body. Driven by `sentAt.size`
+   *  so it survives whatever weird mix of in-flight, superseded, and
+   *  fatal responses the WS happens to be juggling. */
+  const syncLoadingIndicator = (): void => {
+    const busy = sentAt.size > 0;
+    document.getElementById("preview")
+      ?.classList.toggle("preview--loading", busy);
+    document.body.classList.toggle("converting", busy);
+  };
+  /** Live "converting (Xs)" elapsed-time counter. Big arXiv papers
+   *  routinely take 5-15 s server-side; without a visible counter the
+   *  page reads as frozen even though the WS is still alive. The
+   *  timer starts when sentAt transitions empty → non-empty and
+   *  stops when it transitions back. */
+  let convertStartedAt: number | null = null;
+  let convertTickerId: number | null = null;
+  const startConvertTicker = (): void => {
+    if (convertTickerId !== null) return;
+    convertStartedAt = performance.now();
+    const tick = () => {
+      if (convertStartedAt === null) return;
+      const s = ((performance.now() - convertStartedAt) / 1000).toFixed(1);
+      statusEl().textContent = `converting… (${s}s)`;
+    };
+    tick();
+    convertTickerId = window.setInterval(tick, 250);
+  };
+  const stopConvertTicker = (): void => {
+    if (convertTickerId !== null) {
+      window.clearInterval(convertTickerId);
+      convertTickerId = null;
+    }
+    convertStartedAt = null;
+  };
+  /** Hard-clear the watermark, regardless of `sentAt.size`. Called
+   *  whenever fresh content lands in the preview pane: the user is
+   *  now looking at a current render, so the watermark MUST come off
+   *  even if some older request's `sentAt` slot is orphaned (the WS
+   *  handler's tokio::select cancellation path drops cancelled
+   *  requests silently — no "superseded" reply — so those slots
+   *  never settle on their own). */
+  const clearLoadingIndicator = (): void => {
+    document.getElementById("preview")?.classList.remove("preview--loading");
+    document.body.classList.remove("converting");
+  };
+  /** Drop every `sentAt` entry older than `beforeId`. Those requests
+   *  were either responded to in some earlier branch or silently
+   *  cancelled by a newer one; either way they will not produce a
+   *  fresh response and would otherwise keep the watermark on
+   *  forever via `syncLoadingIndicator`. */
+  const sweepStaleSentAt = (beforeId: number): void => {
+    for (const id of [...sentAt.keys()]) {
+      if (id < beforeId) sentAt.delete(id);
+    }
+  };
+  // Each entry maps a convert request id to a callback that resolves
+  // its `awaitRender` promise. Used by the example-swap chain (and
+  // any other caller that needs to know "this convert has either
+  // rendered or is permanently lost") to serialize against rapid
+  // re-clicks. Settled in *every* branch of `onWsMessage` so callers
+  // never wedge — even on fatal / session-expired / superseded.
+  const awaitingRender = new Map<number, () => void>();
+  const settleAwaiter = (id: number): void => {
+    const cb = awaitingRender.get(id);
+    if (cb) {
+      awaitingRender.delete(id);
+      cb();
+    }
+  };
+  const awaitRender = (id: number, timeoutMs = 30_000): Promise<void> => {
+    return new Promise<void>((resolve) => {
+      const t = window.setTimeout(() => {
+        awaitingRender.delete(id);
+        resolve();
+      }, timeoutMs);
+      awaitingRender.set(id, () => {
+        window.clearTimeout(t);
+        resolve();
+      });
+    });
+  };
   const onWsMessage = (resp: ConvertResponse) => {
     if (resp.id < latestSeenId) {
       sentAt.delete(resp.id);
+      syncLoadingIndicator();
+      if (sentAt.size === 0) stopConvertTicker();
+      settleAwaiter(resp.id);
       return;
     }
     if (resp.status === "superseded") {
       sentAt.delete(resp.id);
+      syncLoadingIndicator();
+      if (sentAt.size === 0) stopConvertTicker();
+      settleAwaiter(resp.id);
       return;
     }
     if (resp.status_code === 4) {
       // session_expired — reopen and re-trigger preview.
       statusEl().textContent = "session expired — reopening";
       showToast("Session expired — reopening", "warn");
+      settleAwaiter(resp.id);
+      // Don't clear the loading indicator here: we're about to fire a
+      // fresh convert which will re-add it anyway, and clearing in the
+      // meantime would flicker the stripes off for one frame.
       void session.reopen().then(() => {
         rebuildWsClient();
         scheduleConvert();
@@ -515,6 +625,9 @@ async function main(): Promise<void> {
     if (resp.status_code === 3) {
       statusEl().textContent = "fatal";
       showLog(resp.log);
+      syncLoadingIndicator();
+      if (sentAt.size === 0) stopConvertTicker();
+      settleAwaiter(resp.id);
       return;
     }
     statusEl().textContent = resp.status || "ok";
@@ -523,6 +636,16 @@ async function main(): Promise<void> {
     renderResult(resp.result);
     const t_render1 = performance.now();
     logEl().textContent = resp.log;
+    // Drop any orphaned older slots (cancelled requests that the WS
+    // handler quietly dropped). Then hard-clear the watermark — the
+    // pane now shows current content, so the indicator MUST be off
+    // even if a still-pending newer request is in flight; that newer
+    // request will re-add the indicator via syncLoadingIndicator() on
+    // the next scheduleConvert if it fires after this render.
+    sweepStaleSentAt(resp.id);
+    clearLoadingIndicator();
+    syncLoadingIndicator();
+    if (sentAt.size === 0) stopConvertTicker();
 
     if (t_send !== undefined) {
       const wall_ms = t_render1 - t_send;
@@ -531,6 +654,7 @@ async function main(): Promise<void> {
       const render_ms = t_render1 - t_render0;
       renderTimings({ resp, network_ms, render_ms, wall_ms });
     }
+    settleAwaiter(resp.id);
   };
 
   const rebuildWsClient = (): void => {
@@ -549,8 +673,25 @@ async function main(): Promise<void> {
   // -----------------------------------------------------------------
   let nextId = 1;
   let timer: number | null = null;
-  const scheduleConvert = (): void => {
-    if (!client || !activePath || !isTextPath(activePath)) return;
+  /** Returns the request id we sent (so callers like the example-swap
+   *  chain can `awaitRender(id)` to know when this particular convert
+   *  has either rendered or been definitively given up on), or `null`
+   *  when the convert was skipped:
+   *    - no WS client (boot in flight)
+   *    - no active path
+   *    - active buffer isn't a `.tex` (the engine only parses TeX —
+   *      sending a JSON / Markdown / SVG buffer surfaces as bogus
+   *      diagnostics; a quiet skip is the right answer)
+   *    - active path was deleted out from under us and no
+   *      replacement has been picked yet (would otherwise surface as
+   *      "active_file: No such file or directory" server-side) */
+  const scheduleConvert = (): number | null => {
+    if (!client || !activePath) return null;
+    if (!activePath.toLowerCase().endsWith(".tex")) return null;
+    if (!session.envelope.files.some((f) => f.path === activePath)) {
+      activePath = null;
+      return null;
+    }
     const id = nextId++;
     sentAt.set(id, performance.now());
     const tex = editor.getSource();
@@ -565,6 +706,9 @@ async function main(): Promise<void> {
       preload: PRELOAD,
     });
     statusEl().textContent = "converting…";
+    startConvertTicker();
+    syncLoadingIndicator();
+    return id;
   };
 
   editor.onChange((path, tex) => {
@@ -618,8 +762,28 @@ async function main(): Promise<void> {
         // BufferStore preserves the previous buffer's state on
         // switch; we still PUT the active text buffer first so the
         // engine's `\input` resolution sees the latest bytes on
-        // disk. Binary buffers (the metadata stub) skip the PUT.
-        if (activePath && isTextPath(activePath)) {
+        // disk whenever the next convert fires. Binary buffers (the
+        // metadata stub) skip the PUT.
+        //
+        // Skip the save when the prior active path is no longer in
+        // the session's file list — that's the file-just-deleted
+        // path, where the FilePanel has cleared its active and is
+        // auto-opening the replacement. PUTing here would recreate
+        // the file we just removed (with whatever stale text the
+        // editor still holds), and `find_main_tex` would happily
+        // pick it back up as the project's main entry.
+        //
+        // Note: switching files does NOT trigger a convert. The
+        // server's `find_main_tex` always renders the project's main
+        // entrypoint regardless of which file the editor displays —
+        // re-rendering on every navigation click would be wasted
+        // work. Conversions are driven only by events that change
+        // *what* gets rendered: edits (via the debounce), file-set
+        // mutations (upload / delete / clear / new file), and
+        // example swaps.
+        const stillExists = !!activePath
+          && session.envelope.files.some((f) => f.path === activePath);
+        if (activePath && isTextPath(activePath) && stillExists) {
           try {
             const ack = await session.putText(activePath, editor.getSource());
             lastVersion = ack.version;
@@ -629,7 +793,6 @@ async function main(): Promise<void> {
           }
         }
         await setActiveFile(path);
-        scheduleConvert();
       },
       onSessionSwap: (env: SessionEnvelope) => {
         void handleSessionSwap(env);
@@ -637,36 +800,46 @@ async function main(): Promise<void> {
     });
   }
 
-  async function handleSessionSwap(env: SessionEnvelope): Promise<void> {
+  async function handleSessionSwap(env: SessionEnvelope): Promise<number | null> {
     // The new session has its own filesystem; any cached buffers
     // from the previous one are stale (same path → different bytes).
     // Drop them all so `setActiveFile` is forced to GET fresh
     // content. See editor.ts `closeAllBuffers`.
     editor.closeAllBuffers();
-    activePath = env.entry || "main.tex";
-    try {
-      await setActiveFile(activePath);
-    } catch (e) {
-      console.error("swap GET failed", e);
-      showToast(`Could not load ${activePath}: ${e}`, "error");
+    activePath = pickInitialActivePath(env);
+    if (activePath !== null) {
+      try {
+        await setActiveFile(activePath);
+      } catch (e) {
+        console.error("swap GET failed", e);
+        showToast(`Could not load ${activePath}: ${e}`, "error");
+      }
     }
     rebuildWsClient();
     filePanel?.setSession(env);
-    scheduleConvert();
+    return scheduleConvert();
   }
 
-  // Examples dropdown: switch slot, refresh file panel, replace editor,
-  // trigger preview.
-  bootExamples(async (slug) => {
-    try {
-      await session.switchSlot(`example:${slug}`);
-    } catch (e) {
-      console.error("switchSlot failed", e);
-      showToast(`Loading example failed: ${e}`, "error");
-      statusEl().textContent = "load example failed";
-      return;
-    }
-    await handleSessionSwap(session.envelope);
+  // Examples dropdown: switch slot, refresh file panel, replace
+  // editor, trigger preview. Swaps are *serialized* via `swapChain`
+  // because rebuildWsClient() during a still-pending convert closes
+  // the WS before the response can arrive — so back-to-back clicks
+  // would leave the preview blank. Each swap awaits its own convert
+  // response (or a 30s timeout) before releasing the chain.
+  let swapChain: Promise<void> = Promise.resolve();
+  bootExamples((slug) => {
+    swapChain = swapChain.then(async () => {
+      try {
+        await session.switchSlot(`example:${slug}`);
+      } catch (e) {
+        console.error("switchSlot failed", e);
+        showToast(`Loading example failed: ${e}`, "error");
+        statusEl().textContent = "load example failed";
+        return;
+      }
+      const id = await handleSessionSwap(session.envelope);
+      if (id !== null) await awaitRender(id);
+    });
   });
 
   // First convert kicks off after the editor has been hydrated and the

@@ -115,7 +115,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/user", post(mint_user))
         .route("/api/session", post(create_session))
-        .route("/api/session/{id}/files", get(list_files))
+        .route("/api/session/{id}/files", get(list_files).delete(clear_files))
         .route(
             "/api/session/{id}/files/{*path}",
             get(get_file).put(put_file).delete(delete_file),
@@ -177,6 +177,55 @@ async fn create_session(
         entry,
         files: listing,
     }))
+}
+
+async fn clear_files(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<OkAck>, AppError> {
+    // Wipe every entry directly under the session root, leaving the
+    // root itself intact so the user can keep using the same session
+    // id. Quota counters drop to zero, the cached preview HTML and
+    // main-entry pick reset, and the version bumps so any in-flight
+    // convert frame the client races us with gets the post-clear
+    // version echo. Used by the file panel's "clear" button — a
+    // destructive operation gated by a confirm dialog client-side.
+    let session = require_session(&state, &headers, &id).await?;
+    let mut entries = tokio::fs::read_dir(&session.dir)
+        .await
+        .map_err(map_io_err_with(&session))?;
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|e| AppError::internal(format!("read_dir entry: {e}")))?
+    {
+        let p = entry.path();
+        let ft = entry
+            .file_type()
+            .await
+            .map_err(|e| AppError::internal(format!("file_type: {e}")))?;
+        if ft.is_dir() {
+            tokio::fs::remove_dir_all(&p)
+                .await
+                .map_err(|e| AppError::internal(format!("rmdir {}: {e}", p.display())))?;
+        } else {
+            tokio::fs::remove_file(&p)
+                .await
+                .map_err(|e| AppError::internal(format!("rm {}: {e}", p.display())))?;
+        }
+    }
+    session.bytes_used.store(0, Ordering::Relaxed);
+    session.file_count.store(0, Ordering::Relaxed);
+    if let Ok(mut h) = session.last_html.lock() {
+        *h = None;
+    }
+    if let Ok(mut m) = session.main_entry.lock() {
+        *m = None;
+    }
+    let version = session.bump_version();
+    session.touch();
+    Ok(Json(OkAck { ok: true, version }))
 }
 
 async fn list_files(
@@ -259,6 +308,14 @@ async fn put_file(
     let version = session.bump_version();
     session.touch();
 
+    // A new file landed; the project's main-entry pick may need to
+    // change. Editing an existing file keeps the same set, so we skip
+    // the heuristic on plain overwrites — keystroke-debounced PUTs
+    // dominate the WS chatter and find_main_tex isn't free.
+    if delta_files > 0 {
+        session.refresh_main_entry();
+    }
+
     let mtime = tokio::fs::metadata(&path)
         .await
         .ok()
@@ -291,6 +348,7 @@ async fn delete_file(
     }
     let version = session.bump_version();
     session.touch();
+    session.refresh_main_entry();
     Ok(Json(OkAck { ok: true, version }))
 }
 
@@ -304,6 +362,15 @@ async fn upload_files(
     let cfg = state.sessions.config();
     let mut written: Vec<FileMeta> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
+    // Snapshot the pre-upload count so we can decide whether the
+    // "unwrap one folder level" heuristic should run after the
+    // batch lands. Folder uploads from `webkitdirectory` post every
+    // file with the picker's folder name as the leading segment of
+    // `webkitRelativePath`; for a fresh session that's pure
+    // wrapping noise we strip below. On a populated session we
+    // leave the upload alone — an `assets/` drop into an existing
+    // project genuinely belongs under `assets/`.
+    let prior_file_count = session.file_count.load(Ordering::Relaxed);
 
     while let Some(mut field) = multipart
         .next_field()
@@ -314,6 +381,39 @@ async fn upload_files(
             .file_name()
             .ok_or_else(|| AppError::bad_request("multipart: missing filename"))?
             .to_string();
+        // Archive: buffer the bytes (bounded by `quota_archive_bytes`)
+        // and run them through the same `unpack_overlay` path the
+        // dedicated `upload-archive` endpoint uses. This lets the
+        // single "upload" button transparently accept `.zip` /
+        // `.tar.gz` files alongside loose folder picks — previously
+        // those bodies ran through the regular file path, hit the
+        // extension allowlist (which doesn't include archive
+        // formats), and got silently skipped after a long drain.
+        if is_archive_extension(&filename) {
+            let mut bytes = Vec::with_capacity(64 * 1024);
+            while let Some(chunk) = field
+                .chunk()
+                .await
+                .map_err(|e| AppError::bad_request(format!("multipart chunk: {e}")))?
+            {
+                bytes.extend_from_slice(&chunk);
+                quota::check_archive_size(cfg, bytes.len() as u64)?;
+            }
+            let dir = session.dir.clone();
+            let cfg_owned = cfg.clone();
+            let outcome = tokio::task::spawn_blocking(move || {
+                archive::unpack_overlay(&bytes, &dir, &cfg_owned, ConflictPolicy::Skip)
+            })
+            .await
+            .map_err(|e| AppError::internal(format!("join: {e}")))??;
+            session.bytes_used.fetch_add(outcome.bytes_written, Ordering::Relaxed);
+            session.file_count.fetch_add(outcome.files_written, Ordering::Relaxed);
+            for p in outcome.paths {
+                let kind = file_kind_for(&p);
+                written.push(FileMeta { path: p, size: 0, kind });
+            }
+            continue;
+        }
         if !is_allowed_extension(&filename) {
             // Drain the field's body so the next field can be parsed,
             // then move on. Folder uploads in particular routinely
@@ -357,9 +457,79 @@ async fn upload_files(
         written.push(FileMeta { path: filename, size: bytes_in_file, kind });
     }
 
+    if prior_file_count == 0
+        && let Some(prefix) = single_top_level_prefix(&written)
+    {
+        unwrap_one_level(&session, &prefix, &mut written).await?;
+    }
+
     let version = session.bump_version();
     session.touch();
+    session.refresh_main_entry();
     Ok(Json(UploadAck { files: written, version, skipped }))
+}
+
+/// Inspect the just-written upload set and, if every entry shares
+/// the same first path segment AND no entry sits at the session
+/// root already, return that segment. Used by `upload_files` to
+/// flatten `mypaper/...` → `...` after a webkitdirectory pick into
+/// an empty session. Returns `None` for mixed-prefix sets, single
+/// flat files, or any path containing only one segment.
+fn single_top_level_prefix(written: &[FileMeta]) -> Option<String> {
+    if written.is_empty() {
+        return None;
+    }
+    let first = written[0].path.split_once('/')?.0.to_string();
+    if first.is_empty() {
+        return None;
+    }
+    for f in written {
+        let head = match f.path.split_once('/') {
+            Some((h, rest)) if !rest.is_empty() => h,
+            _ => return None, // root-level file or empty rest → don't unwrap
+        };
+        if head != first {
+            return None;
+        }
+    }
+    Some(first)
+}
+
+/// Move every file under `<session>/<prefix>/` up one level into
+/// `<session>/`, then remove the now-empty wrapper directory. Updates
+/// the in-memory `written` list so the response advertises the
+/// post-unwrap paths the client will see in the next listFiles.
+async fn unwrap_one_level(
+    session: &Session,
+    prefix: &str,
+    written: &mut [FileMeta],
+) -> Result<(), AppError> {
+    let prefix_with_slash = format!("{prefix}/");
+    for f in written.iter_mut() {
+        let stripped = f
+            .path
+            .strip_prefix(&prefix_with_slash)
+            .ok_or_else(|| AppError::internal("unwrap: prefix mismatch"))?
+            .to_string();
+        let from = session.resolve(&f.path)?;
+        let to = session.resolve(&stripped)?;
+        if let Some(parent) = to.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| AppError::internal(format!("unwrap mkdir: {e}")))?;
+        }
+        tokio::fs::rename(&from, &to)
+            .await
+            .map_err(|e| AppError::internal(format!("unwrap rename: {e}")))?;
+        f.path = stripped;
+    }
+    // The wrapper directory should be empty after every file moved
+    // up — `remove_dir_all` is fine if a stray dotfile or empty
+    // sub-tree lingered. Best-effort: a failure here doesn't undo
+    // the upload, just leaves a tidy-up artefact.
+    let wrapper = session.resolve(prefix)?;
+    let _ = tokio::fs::remove_dir_all(&wrapper).await;
+    Ok(())
 }
 
 async fn upload_archive(
@@ -386,6 +556,7 @@ async fn upload_archive(
     session.file_count.fetch_add(outcome.files_written, Ordering::Relaxed);
     let version = session.bump_version();
     session.touch();
+    session.refresh_main_entry();
 
     let files: Vec<FileMeta> = outcome
         .paths
@@ -574,6 +745,7 @@ async fn mkdir(
         .map_err(map_io_err_with(&session))?;
     let version = session.bump_version();
     session.touch();
+    session.refresh_main_entry();
     Ok(Json(OkAck { ok: true, version }))
 }
 
@@ -594,6 +766,7 @@ async fn rename(
     tokio::fs::rename(&from, &to).await.map_err(map_io_err_with(&session))?;
     let version = session.bump_version();
     session.touch();
+    session.refresh_main_entry();
     Ok(Json(OkAck { ok: true, version }))
 }
 
@@ -721,7 +894,8 @@ async fn scan_files(root: &std::path::Path) -> Result<Vec<FileMeta>, AppError> {
 fn file_kind_for(path: &str) -> FileKind {
     if matches!(
         std::path::Path::new(path).extension().and_then(|e| e.to_str()),
-        Some("tex" | "sty" | "cls" | "bib" | "bst" | "bbl" | "txt" | "md" | "csv"
+        Some("tex" | "sty" | "cls" | "bib" | "bst" | "bbl" | "def" | "ldf"
+             | "txt" | "md" | "csv"
              | "toml" | "json" | "yaml" | "yml" | "svg")
     ) {
         FileKind::Text
@@ -733,10 +907,19 @@ fn file_kind_for(path: &str) -> FileKind {
 fn is_allowed_extension(path: &str) -> bool {
     matches!(
         std::path::Path::new(path).extension().and_then(|e| e.to_str()),
-        Some("tex" | "sty" | "cls" | "bib" | "bst"
+        Some("tex" | "sty" | "cls" | "bib" | "bst" | "bbl" | "def" | "ldf"
              | "png" | "jpg" | "jpeg" | "gif" | "svg" | "pdf" | "eps"
              | "csv" | "txt" | "md" | "toml" | "json" | "yaml" | "yml")
     )
+}
+
+/// Archive extensions handled by the upload endpoint via
+/// `unpack_overlay`. Compound suffix `.tar.gz` is matched on the full
+/// filename rather than on `Path::extension` (which would only see
+/// `.gz`); `.tgz` and `.zip` are the regular single-suffix forms.
+fn is_archive_extension(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with(".zip") || lower.ends_with(".tar.gz") || lower.ends_with(".tgz")
 }
 
 fn sniff_content_type(path: &std::path::Path) -> &'static str {
