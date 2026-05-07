@@ -3,11 +3,105 @@
 {% block main %}
 <article class="prose">
   <h1>Help</h1>
+
+  <h2>Editing &amp; preview</h2>
   <ul>
-    <li>Type LaTeX in the left pane; the right pane re-renders after a 300&nbsp;ms pause.</li>
+    <li>Type LaTeX in the source pane; the preview pane re-renders after a 300&nbsp;ms pause.</li>
     <li>If your snippet contains <code>\begin{document}&hellip;\end{document}</code>, the
         preamble is split off and sent as <code>preamble</code>.</li>
     <li>Click the status bar to toggle the conversion log.</li>
+    <li>While a conversion is in flight, the preview pane shows a diagonal-stripe
+        watermark, the cursor turns into the system <em>progress</em> spinner, and
+        the status counter ticks (<code>converting&hellip; (Xs)</code>). Big arXiv
+        sources can take 5&ndash;15&nbsp;seconds &mdash; this is normal, not a freeze.</li>
   </ul>
+
+  <h2>The file panel</h2>
+  <p>
+    The leftmost column lists every file in your current session. Click any
+    file to open it in the editor. Switching the active file does
+    <em>not</em> trigger a re-conversion: the engine always renders the
+    project's <strong>main entry</strong> (auto-detected from
+    <code>00README.json</code> if present, otherwise via the same heuristic
+    arXiv uses), regardless of which buffer you're viewing.
+  </p>
+  <p>
+    Each row reveals a small <code>&times;</code> on hover that deletes the
+    file (or recursively removes the folder, with confirmation). Conversions
+    fire only on events that actually change <em>what</em> gets rendered:
+    edits, uploads, deletes, file creation, clearing, and example swaps.
+  </p>
+
+  <h2>The four header buttons</h2>
+  <dl>
+    <dt><code>create</code></dt>
+    <dd>
+      Prompts for a relative path (e.g. <code>chapter1.tex</code>) and
+      writes an empty file at that location, then opens it in the editor.
+      Useful for sectioning out a longer document.
+    </dd>
+
+    <dt><code>upload</code></dt>
+    <dd>
+      <p>
+        Click to open a file picker that accepts any number of loose files
+        plus <code>.zip</code> / <code>.tar.gz</code> / <code>.tgz</code>
+        archives &mdash; the server unpacks the archive into the session
+        and lays out its files at the project root.
+      </p>
+      <p>
+        For full directory uploads, <strong>drag and drop</strong> a folder
+        anywhere onto the file panel (the entire sidebar is a drop target;
+        it lights up while a drag hovers over it). Sub-directory layout is
+        preserved. Drag-and-drop also accepts the same archive formats as
+        the click path.
+      </p>
+    </dd>
+
+    <dt><code>download</code></dt>
+    <dd>
+      Bundles every file in your session, plus the latest rendered
+      <code>index.html</code> and the ar5iv stylesheet pack, into a
+      single ZIP. Extract it anywhere and open <code>index.html</code> in
+      a browser to see the rendered document offline.
+    </dd>
+
+    <dt><code>clear</code></dt>
+    <dd>
+      Deletes every file in the project (with a confirmation dialog).
+      The session itself stays open; you can immediately upload a new
+      folder or start fresh with <code>create</code>. The button hovers
+      red to flag the destructive action.
+    </dd>
+  </dl>
+
+  <h2>Themes</h2>
+  <p>
+    Click the chrome-theme button at the top-right to cycle through three
+    palettes. Your choice is remembered across reloads.
+  </p>
+  <dl>
+    <dt><code>paper</code></dt>
+    <dd>
+      Light, cream-toned surfaces with a deep-purple accent and serif
+      preview type &mdash; the default for screens whose system colour
+      preference is light. Optimised for long-form reading.
+    </dd>
+
+    <dt><code>midnight</code></dt>
+    <dd>
+      Soft dark surfaces with a lavender accent. The default when your
+      system prefers a dark colour scheme. Easy on the eyes for late-night
+      sessions without going jet-black.
+    </dd>
+
+    <dt><code>terminal</code></dt>
+    <dd>
+      Near-black surfaces with a phosphor-green accent and a fully
+      monospaced typeface throughout (chrome included). Reads like a
+      retro CRT &mdash; useful when you'd rather see structure than
+      typography.
+    </dd>
+  </dl>
 </article>
 {% endblock %}
