@@ -1,7 +1,7 @@
 import "./styles.css";
 import { createEditor, type EditorTheme } from "./editor.ts";
 import { ConvertClient, type ConvertResponse, type Diagnostic } from "./ws.ts";
-import { renderResult, showLog, setPreviewTheme } from "./preview.ts";
+import { renderResult, showLog, showEmptyState, setPreviewTheme, setPreviewChromeTheme } from "./preview.ts";
 import { EXAMPLES_LIST } from "./examples.ts";
 import {
   SessionClient,
@@ -310,8 +310,10 @@ async function bootVersionMarker(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const initialEditorTheme = chromeToEditor(readChromeTheme());
+  const initialChromeTheme = readChromeTheme();
+  const initialEditorTheme = chromeToEditor(initialChromeTheme);
   setPreviewTheme(initialEditorTheme);
+  setPreviewChromeTheme(initialChromeTheme);
 
   const host = document.getElementById("codemirror-host");
   if (!host) return;
@@ -328,6 +330,7 @@ async function main(): Promise<void> {
     const e = chromeToEditor(detail?.theme);
     editor.setTheme(e);
     setPreviewTheme(e);
+    if (detail?.theme) setPreviewChromeTheme(detail.theme);
   });
 
   // -----------------------------------------------------------------
@@ -673,6 +676,20 @@ async function main(): Promise<void> {
   // -----------------------------------------------------------------
   let nextId = 1;
   let timer: number | null = null;
+  /** Paint the preview pane's "no .tex to render" placeholder when
+   *  the session has no convertible source file. Idempotent — safe
+   *  to call from any code path that just changed the file set. */
+  const maybeShowEmptyState = (): void => {
+    const hasTex = session.envelope.files.some(
+      (f) => f.path.toLowerCase().endsWith(".tex"),
+    );
+    if (!hasTex) {
+      showEmptyState(
+        "No .tex file in this project — create or upload one to render.",
+      );
+      statusEl().textContent = "ready";
+    }
+  };
   /** Returns the request id we sent (so callers like the example-swap
    *  chain can `awaitRender(id)` to know when this particular convert
    *  has either rendered or been definitively given up on), or `null`
@@ -686,10 +703,17 @@ async function main(): Promise<void> {
    *      replacement has been picked yet (would otherwise surface as
    *      "active_file: No such file or directory" server-side) */
   const scheduleConvert = (): number | null => {
-    if (!client || !activePath) return null;
-    if (!activePath.toLowerCase().endsWith(".tex")) return null;
+    if (!client || !activePath) {
+      maybeShowEmptyState();
+      return null;
+    }
+    if (!activePath.toLowerCase().endsWith(".tex")) {
+      maybeShowEmptyState();
+      return null;
+    }
     if (!session.envelope.files.some((f) => f.path === activePath)) {
       activePath = null;
+      maybeShowEmptyState();
       return null;
     }
     const id = nextId++;

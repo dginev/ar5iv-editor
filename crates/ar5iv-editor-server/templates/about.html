@@ -1,8 +1,9 @@
 {% extends "base.html" %}
-{% block title %}About &mdash; ar5iv-editor{% endblock %}
+{% block title %}About &mdash; ar5iv Editor{% endblock %}
 {% block main %}
 <article class="prose">
-  <h1>ar5iv-editor</h1>
+  <h1>ar5iv Editor</h1>
+  <p class="lede">A live HTML preview for LaTeX, in the browser.</p>
   <p>
     A LaTeX editor with a web-native live preview. Source TeX is sent to the
     backend over a WebSocket; the server runs <code>latexml-oxide</code>
@@ -24,8 +25,19 @@
     No accounts, no long-lived storage. Save anything you want to
     keep with the <em>download</em> button before stepping away.
   </p>
+  <p>
+    Every piece of user-uploaded data is erased on session expiry and
+    is <strong>not logged or retained</strong> elsewhere. Users are
+    responsible for only uploading materials they have sufficient
+    rights to convert and view here.
+  </p>
 
   <h2>Credits</h2>
+  <p>
+    This is early-alpha experimental work brought forward under the <a
+      href="https://ar5iv.labs.arxiv.org/"
+      target="_blank" rel="noopener noreferrer">ar5iv Lab</a> umbrella.
+  </p>
   <p>
     Built by the LaTeXML team as part of the <a
       href="https://www.nist.gov/news-events/news/2024/01/nist-tool-will-make-math-heavy-research-papers-easier-view-online"
@@ -40,5 +52,10 @@
       target="_blank" rel="noopener noreferrer">Deyan</a>
     at <code>deyan@arxiv.org</code>.
   </p>
+
+  <footer class="prose-footer">
+    <a href="https://github.com/dginev/ar5iv-editor"
+       target="_blank" rel="noopener noreferrer">View source on GitHub</a>
+  </footer>
 </article>
 {% endblock %}

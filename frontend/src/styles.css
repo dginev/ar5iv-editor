@@ -159,6 +159,56 @@ button:hover { border-color: var(--accent); color: var(--accent); }
 }
 .ar5iv-header nav a:hover { color: var(--accent); text-decoration: none; }
 
+/* Pin the theme toggle to a fixed width so cycling between
+   `paper` / `midnight` / `terminal` doesn't reflow the rest of the
+   nav. The terminal chrome uses a monospaced font (wider per glyph)
+   so the floor has to clear `terminal` (8 chars) under that
+   typeface, not just under the proportional default. */
+.ar5iv-header nav #theme-toggle {
+  min-width: 7rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  line-height: 1;
+}
+/* Both spans share a fixed 1-em box so flex centering produces a
+   common axis. Without `line-height: 1` the surrounding leading
+   shifts the visual baselines apart and `☀` / `☾` / `_` line up at
+   different heights. */
+.theme-toggle__glyph,
+.theme-toggle__label {
+  display: inline-flex;
+  align-items: center;
+  height: 1em;
+  line-height: 1;
+}
+/* CSS-drawn block cursor for the terminal theme. Sized in `em` so
+   it tracks the nav's font-size; blink animation applied to the
+   bar itself (not the wrapper) so the wrapper still flex-centres
+   with the label. */
+.theme-toggle__cursor {
+  display: inline-block;
+  width: 0.55em;
+  height: 0.18em;
+  background: currentColor;
+  border-radius: 1px;
+  /* Sit at the bottom of the glyph box like a real `_`, overriding
+     the parent flex's `align-items: center`. */
+  align-self: flex-end;
+  margin-bottom: 0.05em;
+  animation: theme-toggle-blink 1.06s steps(2, end) infinite;
+}
+/* Blink the cursor only in the terminal theme. `steps(2, end)`
+   gives a hard on/off rather than a smooth fade — VT100 era. */
+@keyframes theme-toggle-blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .theme-toggle__cursor { animation: none; }
+}
+
 /* -------- landing -------- */
 
 .landing {
@@ -250,8 +300,50 @@ button:hover { border-color: var(--accent); color: var(--accent); }
 .prose h1 {
   font-weight: 600;
   font-size: 2rem;
-  margin: 0 0 1rem;
+  margin: 0 0 0.4rem;
   letter-spacing: -0.01em;
+}
+.prose .lede {
+  font-size: 1.15rem;
+  color: var(--ink-soft);
+  margin: 0 0 1.4rem;
+  letter-spacing: 0;
+}
+.prose .prose-footer {
+  margin-top: 2.4rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+}
+.prose .prose-footer a { color: var(--ink-muted); }
+.prose .prose-footer a:hover { color: var(--link-hover); }
+
+.prose .prose-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0 1.6rem;
+  font-size: 0.95rem;
+}
+.prose .prose-table th,
+.prose .prose-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.55rem 0.8rem;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.prose .prose-table thead th {
+  font-weight: 600;
+  color: var(--ink-soft);
+  border-bottom: 1px solid var(--rule);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.prose .prose-table tbody th {
+  font-weight: 500;
+  white-space: nowrap;
+  width: 1%;
 }
 .prose h2 { font-weight: 600; font-size: 1.4rem; margin-top: 2rem; }
 .prose p { margin: 0.9em 0; }

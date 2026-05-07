@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{% block title %}ar5iv-editor{% endblock %}</title>
+    <title>{% block title %}ar5iv Editor{% endblock %}</title>
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico" />
     <link rel="stylesheet" href="/static/style.css" />
     {# Inline so the theme is applied before first paint, avoiding a flash. #}
@@ -38,7 +38,7 @@
   </head>
   <body>
     <header class="ar5iv-header">
-      <a href="/editor" class="ar5iv-logo">ar5iv-editor</a>
+      <a href="/editor" class="ar5iv-logo">ar5iv Editor</a>
       <nav>
         <a href="/about">About</a>
         <a href="/help">Help</a>
@@ -50,9 +50,22 @@
       (function () {
         var btn = document.getElementById("theme-toggle");
         if (!btn) return;
+        // Glyph per theme: sun for paper (light), crescent for
+        // midnight (dark), CSS-drawn block cursor for terminal.
+        // The terminal glyph is a `<span>` rather than a text
+        // character because every Unicode "underscore-like"
+        // codepoint sits at the bottom of its em box; a CSS bar
+        // gives us pixel-perfect vertical centring with the label.
+        var GLYPH_HTML = {
+          paper:    "☀",
+          midnight: "☾",
+          terminal: "<span class=\"theme-toggle__cursor\"></span>",
+        };
         var label = function () {
           var t = window.__ar5ivTheme.get();
-          btn.textContent = t;
+          var g = GLYPH_HTML[t] || "";
+          btn.innerHTML = "<span class=\"theme-toggle__glyph\" aria-hidden=\"true\">" +
+            g + "</span><span class=\"theme-toggle__label\">" + t + "</span>";
           btn.setAttribute("aria-label", "Theme: " + t + " — click to cycle");
         };
         label();

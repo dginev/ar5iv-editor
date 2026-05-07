@@ -81,6 +81,15 @@ const AR5IV_HOST_DEFAULTS = `
       --warning-text-color:  var(--warn, #d29922);
       --error-text-color:    var(--bad, #f85149);
     }
+    /* Terminal chrome: replace the proportional body + heading
+       typefaces with the chrome's own monospace stack so the
+       preview reads in the same retro-CRT register as the rest of
+       the page. Math glyphs keep STIX (mono fonts can't render math
+       well) and so do code spans (already mono). */
+    :host([data-chrome="terminal"]) {
+      --headings-font-family: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      --text-font-family:     "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    }
     /* ar5iv.css gives framed-text variants only horizontal padding, so a
        span whose content is only whitespace collapses to a 0-height sliver
        once it's promoted to inline-block. Hold the box open with vertical
@@ -107,6 +116,19 @@ const AR5IV_HOST_DEFAULTS = `
     .ltx_framed_right:empty::before,
     .ltx_framed_leftright:empty::before {
       content: "\\00a0";
+    }
+    .preview-empty-state {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 16rem;
+      padding: 2rem;
+      color: var(--text-color, #292929);
+      opacity: 0.55;
+      font-style: italic;
+      font-family: var(--text-font-family, serif);
+      font-size: 1rem;
+      text-align: center;
     }
   </style>
 `;
@@ -144,6 +166,34 @@ export function setPreviewTheme(theme: PreviewTheme): void {
   } else {
     host.removeAttribute("data-theme");
   }
+}
+
+/** Mirror the chrome theme (`paper` / `midnight` / `terminal`) onto
+ *  the shadow host so its CSS can layer chrome-specific styling
+ *  inside the preview — the only one that uses this today is the
+ *  terminal palette, which switches body + heading typography to
+ *  monospace via a `:host([data-chrome="terminal"])` rule baked
+ *  into `AR5IV_HOST_DEFAULTS`. Math typography stays put: STIX is
+ *  the source of truth for math glyphs, and most monospace fonts
+ *  ship without the math repertoire. */
+export function setPreviewChromeTheme(chrome: string): void {
+  const previewEl = document.getElementById("preview");
+  if (!previewEl) return;
+  previewEl.setAttribute("data-chrome", chrome);
+}
+
+/** Paint a centered placeholder string into the preview pane. Used
+ *  when the project has no `.tex` file to render, so the user sees a
+ *  clear next-step instruction instead of a blank pane or a stale
+ *  prior render. */
+export function showEmptyState(message: string): void {
+  const host = ensurePreviewHost();
+  const previewWrap = document.getElementById("preview")!;
+  const log = document.getElementById("log")!;
+  log.hidden = true;
+  previewWrap.hidden = false;
+  const safe = message.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  host.innerHTML = `<div class="preview-empty-state">${safe}</div>`;
 }
 
 export function renderResult(html: string): void {
