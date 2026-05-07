@@ -105,11 +105,22 @@ echo "    latexml-oxide: $LATEXML_PATH ($LATEXML_OXIDE_SHA, $LATEXML_OXIDE_DATE)
 echo "    context:       $CTX"
 echo
 
+# `DOCKER_BUILD_EXTRA` lets callers (notably `release.sh --no-cache`)
+# inject extra docker-build flags without us hard-coding every option.
+# Whitespace-split into an array so quoting survives the call site.
+EXTRA=()
+if [[ -n "${DOCKER_BUILD_EXTRA:-}" ]]; then
+    read -r -a EXTRA <<< "$DOCKER_BUILD_EXTRA"
+    echo "    extra flags:   ${EXTRA[*]}"
+    echo
+fi
+
 docker build \
     -f "$REPO_ROOT/deploy/Dockerfile" \
     -t "$IMAGE" \
     --build-arg "LATEXML_OXIDE_SHA=$LATEXML_OXIDE_SHA" \
     --build-arg "LATEXML_OXIDE_DATE=$LATEXML_OXIDE_DATE" \
+    "${EXTRA[@]}" \
     "$CTX"
 
 if [[ "$PUSH" -eq 1 ]]; then

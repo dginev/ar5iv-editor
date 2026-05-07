@@ -65,6 +65,24 @@ ok()   { printf "    ${C_OK}✓${C_RST} %s\n" "$*"; }
 warn() { printf "    ${C_WARN}!${C_RST} %s\n" "$*" >&2; }
 die()  { printf "${C_BAD}error:${C_RST} %s\n" "$*" >&2; exit 1; }
 
+# A non-empty assignment that explicitly bails when the captured
+# string is empty. Catches silent failures where `jq -r` returns ""
+# because the JSON path didn't match — without this, downstream
+# `curl /api/.../$EMPTY/...` calls hit the wrong route and produce
+# misleading error messages.
+require_nonempty() {
+    local val="$1" name="$2"
+    [[ -n "$val" ]] || die "$name resolved to empty (upstream call failed)"
+}
+
+# Cleanup is registered up front and parameterised on the container
+# name; the smoke phase fills in $SMOKE_NAME when it actually starts a
+# container. This way a Ctrl+C between the build phase and `docker run`
+# doesn't get tripped by a half-installed trap.
+SMOKE_NAME=""
+cleanup() { [[ -n "$SMOKE_NAME" ]] && docker rm -f "$SMOKE_NAME" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
 # -- arg parsing ------------------------------------------------------------
 PUSH=0; TAG_SOURCE=0; SYNC=1; ALLOW_DIRTY=0; NO_CACHE=0; YES=0
 for arg in "$@"; do
@@ -89,7 +107,6 @@ LATEXML_OXIDE_REF="${LATEXML_OXIDE_REF:-master}"
 IMAGE_BASE="${IMAGE_BASE:-ghcr.io/$(git -C "$REPO_ROOT" config --get remote.origin.url \
     | sed -E 's|.*[:/]([^/]+/[^/.]+)(\.git)?$|\1|')}"
 SMOKE_PORT="${SMOKE_PORT:-3210}"
-SMOKE_NAME="ar5iv-smoke-$(date +%s)-$$"
 
 for tool in docker curl jq git awk sed; do
     command -v "$tool" >/dev/null || die "'$tool' is required"
@@ -112,14 +129,28 @@ phase_end()   { ok "$PHASE_NAME — $(( SECONDS - PHASE_START ))s"; }
 # ---------------------------------------------------------------------------
 if [[ $SYNC -eq 1 ]]; then
     phase_start "[A1] sync latexml-oxide ($LATEXML_OXIDE_REF)"
-    # Don't `--quiet` — fetch/pull errors should reach stderr so we don't
-    # build against stale state on a network blip or expired token.
-    git -C "$LATEXML_PATH" fetch origin
-    git -C "$LATEXML_PATH" checkout "$LATEXML_OXIDE_REF"
-    # `pull --ff-only` is a no-op on a detached HEAD or annotated tag —
-    # tolerate that with `|| true` only for those non-branch refs.
-    if git -C "$LATEXML_PATH" symbolic-ref -q HEAD >/dev/null; then
-        git -C "$LATEXML_PATH" pull --ff-only
+
+    # Refuse to clobber uncommitted changes in latexml-oxide. The
+    # checkout below would silently fail (and set-e bail) on staged
+    # edits — surface this as a recognisable error instead. Same
+    # `--allow-dirty` escape valve as for ar5iv-editor.
+    LATEXML_DIRTY=$(git -C "$LATEXML_PATH" status --porcelain | awk '/^[^?]/' || true)
+    if [[ -n "$LATEXML_DIRTY" ]]; then
+        if [[ $ALLOW_DIRTY -eq 0 ]]; then
+            say "$LATEXML_DIRTY"
+            die "latexml-oxide has uncommitted tracked changes (commit/stash, or pass --allow-dirty)"
+        fi
+        warn "latexml-oxide working tree dirty (--allow-dirty); skipping checkout/pull"
+    else
+        # Don't `--quiet` — fetch/pull errors should reach stderr so we
+        # don't build against stale state on a network blip or expired
+        # token.
+        git -C "$LATEXML_PATH" fetch origin
+        git -C "$LATEXML_PATH" checkout "$LATEXML_OXIDE_REF"
+        # `pull --ff-only` only makes sense on an actual branch.
+        if git -C "$LATEXML_PATH" symbolic-ref -q HEAD >/dev/null; then
+            git -C "$LATEXML_PATH" pull --ff-only
+        fi
     fi
     phase_end
 fi
@@ -179,14 +210,12 @@ DATE_TAG=$(date +%Y%m%d)
 LATEST_TAG="$IMAGE_BASE:latest"
 DATED_TAG="$IMAGE_BASE:$DATE_TAG-$LATEXML_SHA"
 
-# `deploy-YYYYMMDD-<sha>` already exists? Plan needs to know up front so
-# we don't push the image and then fail on `git tag`.
-if [[ $TAG_SOURCE -eq 1 ]]; then
-    if git -C "$REPO_ROOT" rev-parse -q --verify "refs/tags/deploy-$DATE_TAG-$LATEXML_SHA" >/dev/null; then
-        warn "git tag deploy-$DATE_TAG-$LATEXML_SHA already exists — will skip the source-tag step"
-        TAG_SOURCE=0
-    fi
-fi
+# Note: we no longer pre-flight-warn that `deploy-YYYYMMDD-<sha>` exists
+# locally. The E1 step is now idempotent — if the tag already exists
+# locally with the same SHA, `git push origin` is a no-op (recovers
+# from a previous run that pushed the image but failed before pushing
+# the tag); if it exists with a *different* SHA, push will fail with
+# a clear "tag already exists" error and we surface it.
 
 # Last deploy- tag, for the changelog. Empty string if no prior deploys.
 LAST_DEPLOY_TAG=$(git -C "$REPO_ROOT" describe --tags --abbrev=0 \
@@ -218,9 +247,8 @@ say "${C_BOLD}=========================================================${C_RST}"
 # Last chance to bail before the long-running step.
 if [[ $PUSH -eq 1 && $YES -eq 0 ]]; then
     say
-    say "${C_DIM}push enabled — Ctrl+C within 5s to abort${C_RST}"
-    for i in 5 4 3 2 1; do printf '%s ' "$i"; sleep 1; done
-    say
+    say "${C_DIM}push enabled — proceeding in 5s (Ctrl+C to abort)${C_RST}"
+    sleep 5
 fi
 
 # ---------------------------------------------------------------------------
@@ -270,40 +298,45 @@ fi
 # ---------------------------------------------------------------------------
 phase_start "[B3] smoke-test on :$SMOKE_PORT"
 
-# Pre-emptively remove any stale container with this name (PID reuse
-# is rare across reboots, but a previous aborted run can leave one).
-docker rm -f "$SMOKE_NAME" >/dev/null 2>&1 || true
+# Generate the container name now that we're actually about to run.
+# The cleanup trap is already installed; setting $SMOKE_NAME activates it.
+SMOKE_NAME="ar5iv-smoke-$(date +%s)-$$"
 
 # Detect port collision via docker itself — that's portable across
 # Linux/macOS where `ss` and `lsof` differ. If the run fails because
-# the port is busy, fall back to an alternate port.
+# the port is busy, fall back to a docker-assigned random port.
 if ! CONTAINER_ID=$(docker run --rm -d -p "$SMOKE_PORT:3000" --name "$SMOKE_NAME" "$LATEST_TAG" 2>&1); then
     if echo "$CONTAINER_ID" | grep -qE 'address already in use|port is already allocated'; then
         warn "port $SMOKE_PORT busy, falling back to a random port"
         CONTAINER_ID=$(docker run --rm -d -P --name "$SMOKE_NAME" "$LATEST_TAG")
         SMOKE_PORT=$(docker port "$CONTAINER_ID" 3000/tcp | awk -F: 'NR==1{print $NF}')
+        require_nonempty "$SMOKE_PORT" "fallback smoke port"
     else
         die "docker run failed: $CONTAINER_ID"
     fi
 fi
-cleanup() { docker rm -f "$SMOKE_NAME" >/dev/null 2>&1 || true; }
-trap cleanup EXIT
 
-# Wait for the /about healthcheck endpoint.
+# Wait for the binary to start serving HTTP. /about is an Askama
+# template that needs no engine work, so it returns 200 well before
+# the conversion worker thread has finished its lazy init — that's
+# fine for a smoke test of "did the binary boot and bind", which is
+# what we're verifying. Engine readiness is implied by the kernel-
+# dump check below.
 deadline=$((SECONDS + 30))
 until curl -fsS "http://127.0.0.1:$SMOKE_PORT/about" >/dev/null 2>&1; do
     if [[ $SECONDS -gt $deadline ]]; then
         say "${C_BAD}--- container logs ---${C_RST}" >&2
         docker logs "$CONTAINER_ID" 2>&1 | tail -50 >&2 || true
-        die "container did not become healthy within 30s"
+        die "container did not start serving HTTP within 30s"
     fi
     sleep 1
 done
-ok "container healthy"
+ok "container serving HTTP"
 
 # /api/version must report the SHA we just synced — guards against a
 # stale build cache silently re-using an older binary.
-LIVE_SHA=$(curl -fsS "http://127.0.0.1:$SMOKE_PORT/api/version" | jq -r '.latexml_oxide.sha')
+LIVE_SHA=$(curl -fsS "http://127.0.0.1:$SMOKE_PORT/api/version" | jq -r '.latexml_oxide.sha // empty')
+require_nonempty "$LIVE_SHA" "/api/version → latexml_oxide.sha"
 [[ "$LIVE_SHA" == "$LATEXML_SHA" ]] || \
     die "image reports latexml_oxide.sha=$LIVE_SHA, expected $LATEXML_SHA"
 ok "version marker matches: $LIVE_SHA"
@@ -312,7 +345,10 @@ ok "version marker matches: $LIVE_SHA"
 # above won't catch a missing dump file because dumps load lazily on
 # first conversion — but a missing dump file IS the most common cause
 # of "image looked fine, prod broke".
-DUMPS=$(docker exec "$CONTAINER_ID" ls /app/dumps 2>/dev/null || true)
+# Use --user root so a future Dockerfile permissions tightening
+# can't make this opaque. We're just listing one directory; no
+# privilege escalation footprint.
+DUMPS=$(docker exec --user root "$CONTAINER_ID" ls /app/dumps 2>/dev/null || true)
 echo "$DUMPS" | grep -q 'plain.dump.txt' || die "/app/dumps/plain.dump.txt missing in image"
 echo "$DUMPS" | grep -q 'latex.dump.txt' || die "/app/dumps/latex.dump.txt missing in image"
 ok "kernel dumps present (plain.dump.txt, latex.dump.txt)"
@@ -329,10 +365,12 @@ ok "/editor serves the wired shell"
 # Catches binary-side regressions in the session manager + file panel
 # without touching the WebSocket convert path (which would need a WS
 # client).
-USER_ID=$(curl -fsS -X POST "http://127.0.0.1:$SMOKE_PORT/api/user" | jq -r '.user_id')
+USER_ID=$(curl -fsS -X POST "http://127.0.0.1:$SMOKE_PORT/api/user" | jq -r '.user_id // empty')
+require_nonempty "$USER_ID" "POST /api/user → user_id"
 SESSION_ID=$(curl -fsS -X POST "http://127.0.0.1:$SMOKE_PORT/api/session" \
     -H "x-ar5iv-user: $USER_ID" -H 'content-type: application/json' \
-    -d '{"slot":"blank"}' | jq -r '.id')
+    -d '{"slot":"blank"}' | jq -r '.id // empty')
+require_nonempty "$SESSION_ID" "POST /api/session → id"
 curl -fsS -X PUT "http://127.0.0.1:$SMOKE_PORT/api/session/$SESSION_ID/files/main.tex" \
     -H "x-ar5iv-user: $USER_ID" \
     --data-binary $'\\documentclass{article}\\begin{document}smoke\\end{document}\n' \
@@ -342,7 +380,55 @@ LIST=$(curl -fsS "http://127.0.0.1:$SMOKE_PORT/api/session/$SESSION_ID/files" \
 echo "$LIST" | grep -q 'main.tex' || die "session lifecycle failed (got: $LIST)"
 ok "session lifecycle ok (user → session → put → list)"
 
-cleanup; trap - EXIT
+# Convert round-trip: prove the engine actually renders something. The
+# kernel dumps load lazily on the first conversion; the dump-file ls
+# above proves the files exist on disk, but only this round-trip
+# proves they parse and feed the engine. websocat is optional so the
+# script still runs on machines without it (with a degraded smoke).
+if ! command -v websocat >/dev/null 2>&1; then
+    warn "websocat not installed — skipping convert round-trip (degraded smoke)"
+    warn "  install: 'cargo install websocat' or 'brew install websocat' / 'apt install websocat'"
+else
+    # GNU `timeout` on Linux, `gtimeout` (via coreutils) on macOS;
+    # fall through to no timeout if neither — websocat's `-n1` exits
+    # naturally on the first response frame, so a missing timeout just
+    # means "Ctrl+C if the server hangs".
+    WS_TIMEOUT=""
+    for cand in timeout gtimeout; do
+        command -v "$cand" >/dev/null 2>&1 && { WS_TIMEOUT="$cand 60"; break; }
+    done
+
+    WS_URL="ws://127.0.0.1:$SMOKE_PORT/convert?session_id=$SESSION_ID&user_id=$USER_ID"
+    WS_REQ=$(jq -nc '{
+        id: 1,
+        active_file: "main.tex",
+        version: 0,
+        profile: "fragment",
+        format: "html5",
+        preload: ["LaTeX.pool", "article.cls"]
+    }')
+
+    if ! WS_RESP=$(printf '%s\n' "$WS_REQ" | $WS_TIMEOUT websocat -n1 "$WS_URL" 2>&1); then
+        die "WS convert round-trip failed: $WS_RESP"
+    fi
+
+    # status_code: 0 = clean, 2 = errors-but-still-rendered. Anything
+    # else (3 = fatal, 4 = session_expired, …) is a release-blocker.
+    WS_STATUS=$(echo "$WS_RESP" | jq -r '.status_code // -1')
+    case "$WS_STATUS" in
+        0|2) : ;;
+        *)   die "convert returned status_code=$WS_STATUS — full response: $WS_RESP" ;;
+    esac
+    WS_RESULT_LEN=$(echo "$WS_RESP" | jq -r '(.result // "") | length')
+    [[ "$WS_RESULT_LEN" -gt 100 ]] || die "convert produced suspiciously small result (${WS_RESULT_LEN} bytes)"
+    echo "$WS_RESP" | jq -r '.result' | grep -q '<' || die "convert result has no HTML tags"
+    ok "convert round-trip ok (status_code=$WS_STATUS, ${WS_RESULT_LEN}-byte HTML5)"
+fi
+
+# Tear down explicitly. The EXIT trap stays armed — it's a no-op
+# once $SMOKE_NAME points at a removed container.
+cleanup
+SMOKE_NAME=""
 phase_end
 
 if [[ $PUSH -eq 0 ]]; then
@@ -362,8 +448,11 @@ fi
 # ---------------------------------------------------------------------------
 phase_start "[C] tag + push"
 docker tag "$LATEST_TAG" "$DATED_TAG"
+PUSH_START=$SECONDS
 docker push "$LATEST_TAG"
 docker push "$DATED_TAG"
+PUSH_DUR=$(( SECONDS - PUSH_START ))
+ok "registry push completed in ${PUSH_DUR}s"
 phase_end
 
 # ---------------------------------------------------------------------------
@@ -372,9 +461,26 @@ phase_end
 if [[ $TAG_SOURCE -eq 1 ]]; then
     DEPLOY_TAG="deploy-$DATE_TAG-$LATEXML_SHA"
     phase_start "[E1] git tag $DEPLOY_TAG"
-    git -C "$REPO_ROOT" tag -a "$DEPLOY_TAG" \
-        -m "deployed with latexml-oxide @${LATEXML_SHA} ($LATEXML_DATE)"
-    git -C "$REPO_ROOT" push origin "$DEPLOY_TAG"
+    # Idempotent recovery from a prior run that pushed the image but
+    # failed before pushing the tag:
+    #   - local exists, points at HEAD → reuse it (skip `tag -a`)
+    #   - local exists, points elsewhere → abort (someone else moved it)
+    #   - local doesn't exist → create it
+    # In all cases that survive the above, push to origin. `git push`
+    # is a no-op when origin already has the same ref at the same SHA,
+    # so we recover automatically.
+    HEAD_SHA=$(git -C "$REPO_ROOT" rev-parse HEAD)
+    if git -C "$REPO_ROOT" rev-parse -q --verify "refs/tags/$DEPLOY_TAG" >/dev/null; then
+        EXISTING_SHA=$(git -C "$REPO_ROOT" rev-parse "$DEPLOY_TAG^{commit}")
+        if [[ "$EXISTING_SHA" != "$HEAD_SHA" ]]; then
+            die "tag $DEPLOY_TAG already exists on a different commit ($EXISTING_SHA, want $HEAD_SHA)"
+        fi
+        ok "local tag $DEPLOY_TAG already at HEAD; only pushing"
+    else
+        git -C "$REPO_ROOT" tag -a "$DEPLOY_TAG" \
+            -m "deployed with latexml-oxide @${LATEXML_SHA} ($LATEXML_DATE)"
+    fi
+    git -C "$REPO_ROOT" push origin "refs/tags/$DEPLOY_TAG"
     phase_end
 fi
 
