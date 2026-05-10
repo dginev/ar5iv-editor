@@ -82,7 +82,16 @@ RUN mkdir -p /build/ar5iv-editor/.cargo && \
         > /build/ar5iv-editor/.cargo/config.toml
 
 WORKDIR /build/ar5iv-editor
-RUN cargo build --release -p ar5iv-editor-server
+# BuildKit cache mounts let cargo's incremental cache survive between
+# image rebuilds. On a cold build the mounts are empty and we pay the
+# full ~17 min release compile; on a warm rebuild (same host, same
+# BuildKit instance) cargo only re-builds what actually changed. The
+# `target/` cache is per-crate-version, the registry cache holds
+# already-downloaded crate sources.
+RUN --mount=type=cache,target=/build/ar5iv-editor/target,sharing=locked,id=ar5iv-editor-target \
+    --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked,id=cargo-registry \
+    cargo build --release -p ar5iv-editor-server && \
+    cp target/release/ar5iv-editor /tmp/ar5iv-editor
 
 # --------------------------------------------------------------------
 # Stage: generate the latexml_oxide kernel dumps (`plain.dump.txt` +
@@ -139,7 +148,16 @@ WORKDIR /build/latexml-oxide
 # this bookworm-based stage. Removing it forces a clean
 # in-image build that links against bookworm's libxml2.so.2.
 RUN rm -rf target
-RUN tools/make_formats.sh
+# Same BuildKit cache pattern as the builder stage: cargo's
+# incremental survives between rebuilds. `make_formats.sh` invokes
+# `cargo build --bin latexml_oxide` internally, then runs the binary
+# twice to dump kernel state. The dumps land outside `target/` (in
+# `resources/dumps/`), so they survive the cache-mount unmount.
+# Use a different cache id from the builder stage because they
+# build different package sets (debug vs release, different bin).
+RUN --mount=type=cache,target=/build/latexml-oxide/target,sharing=locked,id=latexml-oxide-target-debug \
+    --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked,id=cargo-registry \
+    tools/make_formats.sh
 
 # --------------------------------------------------------------------
 
@@ -178,7 +196,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         /etc/ImageMagick-6/policy.xml
 
 WORKDIR /app
-COPY --from=builder /build/ar5iv-editor/target/release/ar5iv-editor /app/ar5iv-editor
+COPY --from=builder /tmp/ar5iv-editor /app/ar5iv-editor
 COPY --from=formats /build/latexml-oxide/resources/dumps             /app/dumps
 COPY ar5iv-editor/frontend/dist /app/frontend/dist
 COPY schema-docs                /app/schema-docs
