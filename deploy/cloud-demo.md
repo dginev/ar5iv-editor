@@ -42,8 +42,10 @@ same data, ~5 min downtime. See the "Upgrade path" section.
   swap to Docker Hub if you prefer).
 - A domain name with DNS you can edit.
 - `docker` running locally.
-- Both `ar5iv-editor/` and `latexml-oxide/` checked out as siblings —
-  e.g. `~/git/ar5iv-editor/` and `~/git/latexml-oxide/`.
+- All four source repos checked out as siblings &mdash; e.g.
+  `~/git/ar5iv-editor/`, `~/git/latexml-oxide/`, `~/git/validator/`
+  (on the `latexml-html5` branch), and `~/git/mathml-schema/`. The
+  last two carry the schema sources for the `/schemas` doc subtrees.
 
 ## 1. Provision the Vultr box
 

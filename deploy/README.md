@@ -14,15 +14,35 @@ ar5iv-editor/deploy/
 └── anubis.yaml         deny-by-default policy
 ```
 
-The build COPYs `latexml-oxide` from the parent directory, so the
-docker build context needs to be the directory that holds **both**
-checkouts:
+The build COPYs `latexml-oxide`, `validator`, and `mathml-schema`
+from the parent directory, so the docker build context needs to be
+the directory that holds **all four** checkouts:
 
 ```
 ~/git/
 ├── ar5iv-editor/      # this repo
-└── latexml-oxide/     # https://github.com/dginev/latexml-oxide  (private)
+├── latexml-oxide/     # https://github.com/dginev/latexml-oxide  (private)
+├── validator/         # https://github.com/dginev/validator      (latexml-html5 branch)
+└── mathml-schema/     # https://github.com/w3c/mathml-schema
 ```
+
+The last two carry the source `.rnc` files for the
+`/schemas/<slug>/` documentation subtrees. `build-and-push.sh`
+runs `latexml-oxide --schemadocs` against each on the host
+*before* the docker build kicks off, so trang / Java / Node never
+need to touch the build pipeline. The frontend bundle (`vite`
+output) is generated locally for the same reason. Both land in
+the staged build context and are copied verbatim into the runtime
+stage. Override paths with `VALIDATOR_PATH` / `MATHML_SCHEMA_PATH`
+env vars if your checkouts live elsewhere.
+
+Local pre-build prerequisites:
+
+- `npm` (Node.js 20+)
+- `trang` (RNC → RNG converter; `apt install trang`)
+- `cargo` — only needed if `latexml_oxide` / `genschema_oxide`
+  haven't been built before; the script falls back to a release
+  build under `~/git/latexml-oxide/target/release/`.
 
 The latexml-oxide source is treated as **private**. The Dockerfile
 is multi-stage so the published image contains only the compiled

@@ -3,7 +3,7 @@
 {% block main %}
 <article class="prose">
   <h1>Schema reference</h1>
-  <p class="lede">Browseable RelaxNG schemas for the formats this editor produces and consumes.</p>
+  <p class="lede">Browseable RelaxNG schemas for the formats this editor emits and validates against.</p>
   <p>
     Each entry below is a generated documentation site &mdash; module
     overviews, element / attribute / pattern definitions, content
@@ -41,11 +41,13 @@
         <td>
           The scholarly HTML5 dialect emitted for arXiv-style papers
           &mdash; standard HTML5 plus the <code>ltx_*</code> class
-          vocabulary, MathML 3 (Presentation + Content), and the
-          structural conventions that survive the
-          <code>ltx&nbsp;&rarr;&nbsp;HTML</code> transformation. The same
-          schema the W3C Nu validator uses when invoked with the
-          &ldquo;HTML scholarly&rdquo; preset.
+          vocabulary, <strong>MathML&nbsp;4 (Core)</strong> for math
+          rendering, and the structural conventions that survive the
+          <code>ltx&nbsp;&rarr;&nbsp;HTML</code> transformation.
+          Content MathML is permitted for backwards compatibility
+          with older corpora; new content should target Core.
+          The same schema the W3C Nu validator uses when invoked with
+          the &ldquo;HTML scholarly&rdquo; preset.
         </td>
         <td>
           <a href="https://github.com/dginev/validator/blob/latexml-html5/schema/html5/scholarly-ltx.rnc"
@@ -63,7 +65,7 @@
           presentation-only, image, or polyfill paths.
         </td>
         <td>
-          <a href="https://github.com/dginev/mathml-schema/blob/main/rnc/mathml4-core.rnc"
+          <a href="https://github.com/w3c/mathml-schema/blob/main/rnc/mathml4-core.rnc"
              target="_blank" rel="noopener noreferrer">mathml-schema</a>
         </td>
       </tr>

@@ -62,49 +62,130 @@ require_dir mathml-schema "$MATHML_SCHEMA_PATH" MATHML_SCHEMA_PATH
 
 # The Dockerfile references `ar5iv-editor/`, `latexml-oxide/`,
 # `validator/`, and `mathml-schema/` paths. We need a build context
-# that contains all four as immediate subdirectories.
+# that contains exactly those four as immediate subdirectories — and
+# nothing else.
 #
-# BuildKit doesn't dereference symlinks at the top level of a build
-# context (security: a symlink-out attack would otherwise leak host
-# files). Two options:
-#   1. Build with the *parent* directory as the context if all four
-#      checkouts already live as siblings there with the canonical
-#      basenames. This is the path we take when the layout matches
-#      (the common dev setup).
-#   2. Otherwise hard-link the trees into a tmpdir staging area via
-#      `cp -al` (fast on the same filesystem, large context but no
-#      actual copies).
+# Earlier versions had a "use the parent directory as the build
+# context" fast-path when all four checkouts lived as siblings under
+# `~/git/`. BuildKit only sends files referenced by COPY directives,
+# so on paper the unused siblings cost nothing. In practice they
+# don't: BuildKit still walks the entire context root to compute
+# stat-based cache keys, which on a working `~/git/` (multi-hundred-
+# GB of unrelated checkouts: corpora, other forks, build artefacts)
+# adds tens of seconds per build *and* invalidates the cache when
+# any unrelated repo changes.
 #
-# Option 1 is faster (no staging) and is the common case.
-parent_of() { (cd "$1/.." && pwd); }
-PARENTS=(
-    "$(parent_of "$REPO_ROOT")"
-    "$(parent_of "$LATEXML_PATH")"
-    "$(parent_of "$VALIDATOR_PATH")"
-    "$(parent_of "$MATHML_SCHEMA_PATH")"
-)
-all_same_parent=1
-for p in "${PARENTS[@]}"; do
-    [[ "$p" == "${PARENTS[0]}" ]] || { all_same_parent=0; break; }
+# Always stage to a tmpdir via `cp -al`. The hardlinks make the
+# staging O(file-count) on the same filesystem, not O(bytes) — even
+# the 45 GB latexml-oxide tree stages in a few seconds — and the
+# trap rm cleans up on exit.
+# `cp -al` requires src and dst on the same filesystem (hardlinks
+# can't cross devices). `/tmp` is often a separate tmpfs / different
+# block device from $HOME, so we anchor the staging dir under
+# $SIBLING_PARENT — which by construction lives on whichever fs
+# holds the source repos. Override AR5IV_STAGE_DIR to point
+# elsewhere if you keep checkouts on a fs $SIBLING_PARENT can't
+# hardlink to (rare).
+STAGE_PARENT="${AR5IV_STAGE_DIR:-$SIBLING_PARENT}"
+CTX="$(mktemp -d -p "$STAGE_PARENT" .ar5iv-build-XXXXXX)"
+CLEANUP="$CTX"
+trap 'rm -rf "$CLEANUP"' EXIT
+echo "==> staging build context in $CTX (hardlinks)"
+cp -al "$REPO_ROOT"          "$CTX/ar5iv-editor"
+cp -al "$LATEXML_PATH"       "$CTX/latexml-oxide"
+cp -al "$VALIDATOR_PATH"     "$CTX/validator"
+cp -al "$MATHML_SCHEMA_PATH" "$CTX/mathml-schema"
+
+# Drop the heaviest "build artefact" subdirs from the staged copies.
+# The hardlinks let us delete from $CTX without touching the source
+# checkouts; what we save is the BuildKit context-walk, which would
+# otherwise stat its way through every file under target/ and
+# node_modules/ to compute cache keys (tens of seconds each on the
+# active dev machine, plus spurious cache invalidation when an
+# unrelated `cargo build` runs between docker builds).
+for junk in \
+    "$CTX/ar5iv-editor/target"            \
+    "$CTX/ar5iv-editor/frontend/node_modules" \
+    "$CTX/ar5iv-editor/frontend/dist"     \
+    "$CTX/latexml-oxide/target"           \
+    "$CTX/validator/build"                \
+    "$CTX/validator/jing-trang"           \
+    "$CTX/mathml-schema/build"            ; do
+    [[ -e "$junk" ]] && rm -rf "$junk"
 done
-if [[ "$all_same_parent" -eq 1 \
-   && "$(basename "$REPO_ROOT")"          == "ar5iv-editor"  \
-   && "$(basename "$LATEXML_PATH")"       == "latexml-oxide" \
-   && "$(basename "$VALIDATOR_PATH")"     == "validator"     \
-   && "$(basename "$MATHML_SCHEMA_PATH")" == "mathml-schema" ]]; then
-    CTX="${PARENTS[0]}"
-    CLEANUP=""
-    echo "==> using parent dir as build context: $CTX"
-else
-    CTX="$(mktemp -d)"
-    CLEANUP="$CTX"
-    trap 'rm -rf "$CLEANUP"' EXIT
-    echo "==> staging build context in $CTX (hardlinks)"
-    cp -al "$REPO_ROOT"          "$CTX/ar5iv-editor"
-    cp -al "$LATEXML_PATH"       "$CTX/latexml-oxide"
-    cp -al "$VALIDATOR_PATH"     "$CTX/validator"
-    cp -al "$MATHML_SCHEMA_PATH" "$CTX/mathml-schema"
+
+# ---------------------------------------------------------------------
+# Local pre-build of platform-independent artefacts.
+#
+# Both the frontend bundle (vite output) and the schema-docs HTML are
+# pure browser content — no native code, no platform tie. Building
+# them on the host instead of inside dedicated docker stages keeps
+# trang / Java / node off the build pipeline, drops two intermediate
+# stages, and shaves a few minutes off cold builds. The Rust binary
+# and the TeX format dumps still build inside docker because both
+# are tied to bookworm's ABI / TeX-Live version.
+
+# === Frontend bundle =================================================
+echo "==> [local prep] building frontend bundle"
+if ! command -v npm >/dev/null 2>&1; then
+    echo "error: 'npm' is required on PATH (Node.js 20+)" >&2
+    echo "  install via your package manager, then retry." >&2
+    exit 1
 fi
+(
+    cd "$CTX/ar5iv-editor/frontend"
+    npm ci --no-audit --no-fund
+    npm run build
+)
+# `dist/` now lives at $CTX/ar5iv-editor/frontend/dist/ and the
+# Dockerfile COPYs it into the runtime stage. node_modules/ stays put;
+# BuildKit only walks paths referenced by COPY directives.
+
+# === Schema documentation ============================================
+echo "==> [local prep] generating schema documentation"
+if ! command -v trang >/dev/null 2>&1; then
+    echo "error: 'trang' is required on PATH (RNC -> RNG conversion)" >&2
+    echo "  install with: sudo apt install trang" >&2
+    exit 1
+fi
+
+# Always run `cargo build --release` so the binary tracks the current
+# source. Cargo's incremental compilation makes this a no-op when
+# nothing has changed (~1s); when the source is ahead of a previous
+# build it does the right thing instead of silently using a binary
+# from before the latest .sty / native-binding change. The earlier
+# "use whatever's in target/" heuristic burned us once with a stale
+# release binary that pre-dated `\schemasource{}{}` getting added to
+# `latexmlman_sty.rs` — generator emitted the macro, engine didn't
+# know it, and the run produced an `<ltx:ERROR/>` cover-page entry.
+echo "    cargo build --release (latexml_oxide, genschema_oxide)"
+(cd "$LATEXML_PATH" && cargo build --release \
+    --bin latexml_oxide --bin genschema_oxide)
+oxide_bin="$LATEXML_PATH/target/release/latexml_oxide"
+genschema_bin="$LATEXML_PATH/target/release/genschema_oxide"
+schema_doc_path="$(dirname "$oxide_bin"):$(dirname "$genschema_bin"):$PATH"
+generator="$LATEXML_PATH/tools/generate-scholarly-schema-docs"
+schema_docs_root="$CTX/schema-docs"
+mkdir -p "$schema_docs_root"
+
+PATH="$schema_doc_path" "$generator" \
+    --schema  "$LATEXML_PATH/resources/RelaxNG/LaTeXML.rnc"  \
+    --catalog "$LATEXML_PATH/resources/LaTeXML.catalog"      \
+    --output  "$schema_docs_root/latexml"                    \
+    --title   "LaTeXML Document Schema"
+PATH="$schema_doc_path" "$generator" \
+    --schema  "$VALIDATOR_PATH/schema/html5/scholarly-ltx.rnc" \
+    --output  "$schema_docs_root/scholarly"                    \
+    --title   "LaTeXML Scholarly HTML Schema"
+PATH="$schema_doc_path" "$generator" \
+    --schema  "$MATHML_SCHEMA_PATH/rnc/mathml4-core.rnc" \
+    --output  "$schema_docs_root/mathml-core"            \
+    --title   "MathML 4 Core"
+
+# The generator drops a sibling "<output>-work" tree next to each
+# output dir. We don't want those in the runtime image — strip them
+# before the docker build context-walk picks them up.
+rm -rf "$schema_docs_root"/*-work
 
 # Capture the latexml-oxide commit identity so the binary can render
 # a "powered by latexml-oxide @<sha>" link in the preview header.

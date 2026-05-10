@@ -28,6 +28,7 @@ services:
     environment:
       AR5IV_EDITOR_BIND: "0.0.0.0:3000"
       AR5IV_EDITOR_STATIC_DIR: "/app/frontend/dist"
+      AR5IV_EDITOR_SCHEMA_DOCS_DIR: "/app/schema-docs"
       AR5IV_EDITOR_SESSIONS_DIR: "/var/ar5iv-sessions"
       RUST_LOG: "info,ar5iv_editor=info"
       # Demo-tightened quotas — tighter than the library defaults
