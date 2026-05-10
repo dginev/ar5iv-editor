@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Schemas &mdash; ar5iv Editor{% endblock %}
+{% block main %}
+<article class="prose">
+  <h1>Schema reference</h1>
+  <p class="lede">Browseable RelaxNG schemas for the formats this editor produces and consumes.</p>
+  <p>
+    Each entry below is a generated documentation site &mdash; module
+    overviews, element / attribute / pattern definitions, content
+    models, and &ldquo;used by&rdquo; cross-references &mdash; built fresh
+    from the source <code>.rnc</code> files at image-build time. The
+    pipeline is <code>trang</code> &rarr; <code>genschema_oxide</code>
+    &rarr; <code>latexml_oxide&nbsp;--schemadocs</code>.
+  </p>
+
+  <table class="prose-table">
+    <thead>
+      <tr>
+        <th scope="col">Schema</th>
+        <th scope="col">What it describes</th>
+        <th scope="col">Source</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row"><a href="/schemas/latexml/"><code>LaTeXML.rnc</code></a></th>
+        <td>
+          The native intermediate XML produced by the LaTeXML engine
+          before any HTML / ePub / JATS post-processing. Defines
+          <code>ltx:document</code>, <code>ltx:section</code>,
+          <code>ltx:Math</code>, and the rest of the abstract document
+          vocabulary that drives every downstream profile.
+        </td>
+        <td>
+          <a href="https://github.com/dginev/latexml-oxide/blob/master/resources/RelaxNG/LaTeXML.rnc"
+             target="_blank" rel="noopener noreferrer">latexml-oxide</a>
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><a href="/schemas/scholarly/"><code>scholarly-ltx.rnc</code></a></th>
+        <td>
+          The scholarly HTML5 dialect emitted for arXiv-style papers
+          &mdash; standard HTML5 plus the <code>ltx_*</code> class
+          vocabulary, MathML 3 (Presentation + Content), and the
+          structural conventions that survive the
+          <code>ltx&nbsp;&rarr;&nbsp;HTML</code> transformation. The same
+          schema the W3C Nu validator uses when invoked with the
+          &ldquo;HTML scholarly&rdquo; preset.
+        </td>
+        <td>
+          <a href="https://github.com/dginev/validator/blob/latexml-html5/schema/html5/scholarly-ltx.rnc"
+             target="_blank" rel="noopener noreferrer">validator</a>
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><a href="/schemas/mathml-core/"><code>mathml4-core.rnc</code></a></th>
+        <td>
+          A minimal, browser-implementable subset of MathML 4
+          covering only the constructs every modern engine
+          (Chromium-derived, WebKit, Gecko) renders today. Useful
+          when you want to <em>guarantee</em> a fragment displays
+          consistently in browsers without falling back to
+          presentation-only, image, or polyfill paths.
+        </td>
+        <td>
+          <a href="https://github.com/dginev/mathml-schema/blob/main/rnc/mathml4-core.rnc"
+             target="_blank" rel="noopener noreferrer">mathml-schema</a>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>How to read these</h2>
+  <p>
+    Each generated site groups definitions per source module
+    (<code>LaTeXML-block.rnc</code>, <code>scholarly-ltx-math.rnc</code>,
+    &hellip;) and uses a rustdoc-styled theme: the left rail navigates
+    modules, each definition carries a stable <code>#schema.<em>name</em></code>
+    anchor with a <code>&sect;</code> permalink on hover, and content
+    models render as multi-line structural expressions rather than
+    one-line walls of comma-separated links.
+  </p>
+</article>
+{% endblock %}

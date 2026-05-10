@@ -255,6 +255,7 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         split_naming: None,
         xslt_parameters: &[],
         graphics_svg_threshold_kb: 0,
+        schemadocs: false,
     };
     let t2 = Instant::now();
     let html_raw = run_post_processing(&xml, &post_opts);

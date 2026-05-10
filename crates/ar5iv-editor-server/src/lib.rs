@@ -36,6 +36,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(routes::root_redirect))
         .route("/about", get(routes::about))
+        .route("/schemas", get(routes::schemas))
         .route("/help", get(routes::help))
         .route("/editor", get(routes::editor))
         .route("/convert", any(ws::ws_handler))

@@ -1,10 +1,12 @@
 # Multi-stage build for the ar5iv-editor binary + frontend bundle.
 #
-# Build context expects two sibling directories at the build root:
+# Build context expects four sibling directories at the build root:
 #
 #   <ctx>/
 #   ├── ar5iv-editor/          # this repo
-#   └── latexml-oxide/         # path-dep, https://github.com/dginev/latexml-oxide
+#   ├── latexml-oxide/         # path-dep, https://github.com/dginev/latexml-oxide
+#   ├── validator/             # ltx-scholarly schema source
+#   └── mathml-schema/         # mathml4-core schema source
 #
 # Use `deploy/build-and-push.sh` from the repo root for the canonical
 # invocation; it handles the symlink dance.
@@ -127,6 +129,46 @@ RUN rm -rf target
 RUN tools/make_formats.sh
 
 # --------------------------------------------------------------------
+# Stage: build a fresh schema-docs site for each RelaxNG schema we
+# advertise on the /schemas page. Inherits the `formats` filesystem
+# so latexml_oxide is already built; we add the genschema_oxide
+# binary, install trang (RNC→RNG), and run the generator three
+# times against the three source schemas.
+#
+# Outputs land in /build/schema-docs/{latexml,scholarly,mathml-core}/
+# and are copied wholesale into the runtime stage.
+
+FROM formats AS schemadocs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        trang \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build/latexml-oxide
+RUN cargo build --bin genschema_oxide
+
+# Source RNC files for the two non-oxide schemas. We only need the
+# schema directories proper — the rest of each repo (Java jars,
+# tests, build outputs) would just bloat the build context.
+COPY validator/schema      /build/validator/schema
+COPY mathml-schema/rnc     /build/mathml-schema/rnc
+
+ENV PATH="/build/latexml-oxide/target/debug:${PATH}"
+RUN mkdir -p /build/schema-docs && \
+    /build/latexml-oxide/tools/generate-scholarly-schema-docs \
+      --schema /build/latexml-oxide/resources/RelaxNG/LaTeXML.rnc \
+      --catalog /build/latexml-oxide/resources/LaTeXML.catalog \
+      --output /build/schema-docs/latexml \
+      --title "LaTeXML Document Schema" && \
+    /build/latexml-oxide/tools/generate-scholarly-schema-docs \
+      --schema /build/validator/schema/html5/scholarly-ltx.rnc \
+      --output /build/schema-docs/scholarly \
+      --title "LaTeXML Scholarly HTML Schema" && \
+    /build/latexml-oxide/tools/generate-scholarly-schema-docs \
+      --schema /build/mathml-schema/rnc/mathml4-core.rnc \
+      --output /build/schema-docs/mathml-core \
+      --title "MathML 4 Core"
+
+# --------------------------------------------------------------------
 
 FROM node:20-bookworm-slim AS frontend
 WORKDIR /build
@@ -171,12 +213,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         /etc/ImageMagick-6/policy.xml
 
 WORKDIR /app
-COPY --from=builder  /build/ar5iv-editor/target/release/ar5iv-editor /app/ar5iv-editor
-COPY --from=frontend /build/ar5iv-editor/frontend/dist /app/frontend/dist
-COPY --from=formats  /build/latexml-oxide/resources/dumps /app/dumps
+COPY --from=builder    /build/ar5iv-editor/target/release/ar5iv-editor /app/ar5iv-editor
+COPY --from=frontend   /build/ar5iv-editor/frontend/dist /app/frontend/dist
+COPY --from=formats    /build/latexml-oxide/resources/dumps /app/dumps
+COPY --from=schemadocs /build/schema-docs /app/schema-docs
 
 ENV AR5IV_EDITOR_BIND="0.0.0.0:3000" \
     AR5IV_EDITOR_STATIC_DIR="/app/frontend/dist" \
+    AR5IV_EDITOR_SCHEMA_DOCS_DIR="/app/schema-docs" \
     LATEXML_DUMP_DIR="/app/dumps"
 
 # `nobody` has UID 65534 — works on every Linux distro out of the

@@ -63,7 +63,22 @@ async fn main() -> anyhow::Result<()> {
     // bundle. `no-cache` (revalidate, not "no-store") still allows 304s
     // when nothing changed, so warm reloads stay cheap.
     let static_service = ServeDir::new(&cfg.static_dir);
+    // Per-schema doc subtrees, mounted under /schemas/<slug>/. The
+    // /schemas bare path is owned by the index handler in `router()`;
+    // `nest_service` strips its prefix before passing to ServeDir, so
+    // /schemas/scholarly/Ch1/index.html resolves against
+    // <schema_docs_dir>/scholarly/Ch1/index.html. If the directory is
+    // missing (dev / first-run before generation) ServeDir 404s; the
+    // index page still renders with dead links — visible breakage,
+    // not a server crash.
+    let schemas_root = &cfg.schema_docs_dir;
+    let latexml_docs    = ServeDir::new(schemas_root.join("latexml"));
+    let scholarly_docs  = ServeDir::new(schemas_root.join("scholarly"));
+    let mathml_core_docs = ServeDir::new(schemas_root.join("mathml-core"));
     let app = router(state.clone())
+        .nest_service("/schemas/latexml",     latexml_docs)
+        .nest_service("/schemas/scholarly",   scholarly_docs)
+        .nest_service("/schemas/mathml-core", mathml_core_docs)
         .nest_service("/static", static_service)
         .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::CACHE_CONTROL,

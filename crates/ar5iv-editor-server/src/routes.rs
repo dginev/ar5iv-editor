@@ -9,7 +9,7 @@ use ar5iv_editor_protocol::{LatexmlOxideVersion, VersionInfo};
 
 use crate::{
     error::AppError,
-    templates::{AboutTemplate, EditorTemplate, HelpTemplate},
+    templates::{AboutTemplate, EditorTemplate, HelpTemplate, SchemasTemplate},
 };
 
 /// Captured at build time from `build.rs`. Format: short SHA.
@@ -35,6 +35,10 @@ pub async fn about() -> Result<Response, AppError> {
 
 pub async fn help() -> Result<Response, AppError> {
     Ok(render_html(StatusCode::OK, HelpTemplate.render()?))
+}
+
+pub async fn schemas() -> Result<Response, AppError> {
+    Ok(render_html(StatusCode::OK, SchemasTemplate.render()?))
 }
 
 /// `GET /api/version` — returns build-time info about the

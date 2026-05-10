@@ -5,6 +5,13 @@ pub struct Config {
     pub bind: SocketAddr,
     pub max_in_flight: usize,
     pub static_dir: PathBuf,
+    /// Root of the per-schema documentation tree generated at image-
+    /// build time. Expected layout:
+    /// `<schema_docs_dir>/{latexml,scholarly,mathml-core}/index.html`.
+    /// In dev (no docs generated yet) the directory may be missing —
+    /// `ServeDir` returns 404 for the sub-paths and the index page
+    /// links are dead but reachable.
+    pub schema_docs_dir: PathBuf,
     pub session: SessionConfig,
 }
 
@@ -70,8 +77,11 @@ impl Config {
         let static_dir = std::env::var("AR5IV_EDITOR_STATIC_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("frontend/dist"));
+        let schema_docs_dir = std::env::var("AR5IV_EDITOR_SCHEMA_DOCS_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("schema-docs"));
         let session = SessionConfig::load_from_env()?;
-        Ok(Self { bind, max_in_flight, static_dir, session })
+        Ok(Self { bind, max_in_flight, static_dir, schema_docs_dir, session })
     }
 }
 
