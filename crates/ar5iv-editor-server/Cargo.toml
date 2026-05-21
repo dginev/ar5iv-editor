@@ -41,6 +41,7 @@ futures-util = { workspace = true }
 # `convert.rs`). Adjust the path if the local checkout lives elsewhere.
 latexml = { path = "../../../latexml-oxide/latexml_oxide" }
 latexml_core = { path = "../../../latexml-oxide/latexml_core" }
+latexml_post = { path = "../../../latexml-oxide/latexml_post" }
 log = "0.4"
 
 # 256-bit OsRng tokens for UserId / SessionId, base64url-encoded — see
