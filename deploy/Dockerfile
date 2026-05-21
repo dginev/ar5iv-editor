@@ -129,7 +129,7 @@ ENV RUST_MIN_STACK=16777216 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config libxml2-dev libxslt1-dev libssl-dev clang \
         libkpathsea-dev libkpathsea6 \
-        autoconf automake libtool make \
+        autoconf automake libtool make mold \
         ca-certificates \
         texlive-latex-base texlive-latex-recommended \
         texlive-pictures texlive-latex-extra \
