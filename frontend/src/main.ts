@@ -359,7 +359,7 @@ async function main(): Promise<void> {
     "[dvipsnames]xcolor.sty",
     "url.sty",
     "hyperref.sty",
-    "[ids,mathlexemes]latexml.sty",
+    "ar5iv.sty",
   ];
 
   // Active file in the session, plus the session's last-known
