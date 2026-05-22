@@ -94,8 +94,8 @@ RUN --mount=type=cache,target=/build/ar5iv-editor/target,sharing=locked,id=ar5iv
     cp target/release/ar5iv-editor /tmp/ar5iv-editor
 
 # --------------------------------------------------------------------
-# Stage: generate the latexml_oxide kernel dumps (`plain.dump.txt` +
-# `latex.dump.txt`) against the ambient TeX Live, mirroring the
+# Stage: generate the latexml_oxide kernel dumps (`plain.YYYY.dump.txt` +
+# `latex.YYYY.dump.txt`) against the ambient TeX Live, mirroring the
 # `make formats` step in latexml-oxide's CI workflow. The engine
 # reads these from disk at runtime; without them every cold start
 # falls back to reconstructing kernel state from `_base` (slower,

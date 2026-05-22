@@ -390,9 +390,9 @@ ok "version marker matches: $LIVE_SHA"
 # can't make this opaque. We're just listing one directory; no
 # privilege escalation footprint.
 DUMPS=$(docker exec --user root "$CONTAINER_ID" ls /app/dumps 2>/dev/null || true)
-echo "$DUMPS" | grep -q 'plain.dump.txt' || die "/app/dumps/plain.dump.txt missing in image"
-echo "$DUMPS" | grep -q 'latex.dump.txt' || die "/app/dumps/latex.dump.txt missing in image"
-ok "kernel dumps present (plain.dump.txt, latex.dump.txt)"
+echo "$DUMPS" | grep -Eq '^plain\.[0-9]{4}\.dump\.txt$' || die "/app/dumps/plain.<year>.dump.txt missing in image"
+echo "$DUMPS" | grep -Eq '^latex\.[0-9]{4}\.dump\.txt$' || die "/app/dumps/latex.<year>.dump.txt missing in image"
+ok "kernel dumps present (plain.<year>.dump.txt, latex.<year>.dump.txt)"
 
 # Editor shell must serve markup that includes the wordmark and the
 # bundled main.js — confirms the askama template + frontend bundle
