@@ -626,7 +626,8 @@ async fn upload_extension_allowlist_skips_unknown_types() {
         .part(
             "good",
             Part::bytes(b"\\section{x}".to_vec()).file_name("ch1.tex"),
-        );
+        )
+        .part("data", Part::bytes(b"1 2 3\n".to_vec()).file_name("fig1_data.dat"));
     let resp = rig
         .client
         .post(rig.url(&format!("/api/session/{id}/upload")))
@@ -643,7 +644,7 @@ async fn upload_extension_allowlist_skips_unknown_types() {
         .iter()
         .map(|f| f["path"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(written, vec!["ch1.tex".to_string()]);
+    assert_eq!(written, vec!["ch1.tex".to_string(), "fig1_data.dat".to_string()]);
     let skipped: Vec<String> = ack["skipped"]
         .as_array()
         .unwrap()

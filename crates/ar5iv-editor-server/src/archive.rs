@@ -541,7 +541,7 @@ fn is_allowed_extension(rel: &Path) -> bool {
         Some(
             "tex" | "sty" | "cls" | "bib" | "bst" | "bbl"
             | "png" | "jpg" | "jpeg" | "gif" | "svg" | "pdf" | "eps"
-            | "csv" | "txt" | "md" | "toml" | "json" | "yaml" | "yml"
+            | "csv" | "dat" | "txt" | "md" | "toml" | "json" | "yaml" | "yml"
         )
     )
 }
@@ -779,6 +779,16 @@ mod tests {
         let zip = make_zip(&[("evil.exe", b"MZ")]);
         let err = unpack_into(&zip, tmp.path(), &cfg).unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn accepts_dat_extension() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_cfg();
+        let zip = make_zip(&[("fig1_data.dat", b"1 2 3\n")]);
+        let out = unpack_into(&zip, tmp.path(), &cfg).unwrap();
+        assert_eq!(out.paths, vec!["fig1_data.dat".to_string()]);
+        assert_eq!(std::fs::read_to_string(tmp.path().join("fig1_data.dat")).unwrap(), "1 2 3\n");
     }
 
     #[test]

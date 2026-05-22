@@ -896,7 +896,7 @@ fn file_kind_for(path: &str) -> FileKind {
         std::path::Path::new(path).extension().and_then(|e| e.to_str()),
         Some("tex" | "sty" | "cls" | "bib" | "bst" | "bbl" | "def" | "ldf"
              | "txt" | "md" | "csv"
-             | "toml" | "json" | "yaml" | "yml" | "svg")
+             | "dat" | "toml" | "json" | "yaml" | "yml" | "svg")
     ) {
         FileKind::Text
     } else {
@@ -909,7 +909,7 @@ fn is_allowed_extension(path: &str) -> bool {
         std::path::Path::new(path).extension().and_then(|e| e.to_str()),
         Some("tex" | "sty" | "cls" | "bib" | "bst" | "bbl" | "def" | "ldf"
              | "png" | "jpg" | "jpeg" | "gif" | "svg" | "pdf" | "eps"
-             | "csv" | "txt" | "md" | "toml" | "json" | "yaml" | "yml")
+             | "csv" | "dat" | "txt" | "md" | "toml" | "json" | "yaml" | "yml")
     )
 }
 
@@ -930,7 +930,7 @@ fn sniff_content_type(path: &std::path::Path) -> &'static str {
         Some("svg") => "image/svg+xml",
         Some("pdf") => "application/pdf",
         Some("json") => "application/json",
-        Some("tex" | "sty" | "cls" | "bib" | "bst" | "txt" | "md" | "csv"
+        Some("tex" | "sty" | "cls" | "bib" | "bst" | "txt" | "md" | "csv" | "dat"
              | "toml" | "yaml" | "yml") => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
     }
@@ -1007,4 +1007,3 @@ fn map_io_err_with(session: &Session) -> impl Fn(std::io::Error) -> AppError + '
         AppError::internal(format!("io: {e}"))
     }
 }
-

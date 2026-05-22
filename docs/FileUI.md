@@ -315,8 +315,9 @@ General behaviour:
   populate filenames from `webkitdirectory`-style folder selection;
   relative paths in the upload preserve folder structure.
 - Upload **extension allowlist**: `.tex`, `.sty`, `.cls`, `.bib`,
-  `.bst`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`, `.pdf`, `.eps`,
-  `.csv`, `.txt`, `.md`, `.toml`, `.json`, `.yaml`, `.yml`. Anything
+  `.bst`, `.bbl`, `.def`, `.ldf`, `.png`, `.jpg`, `.jpeg`, `.gif`,
+  `.svg`, `.pdf`, `.eps`, `.csv`, `.dat`, `.txt`, `.md`, `.toml`,
+  `.json`, `.yaml`, `.yml`. Anything
   else: `415 Unsupported Media Type` with the rejected name in the
   body.
 - Quota and session-expiry checks apply uniformly; both bump
@@ -331,7 +332,7 @@ General behaviour:
 
 The frontend opens these extensions in CodeMirror:
 `.tex`, `.sty`, `.cls`, `.bib`, `.bst`, `.txt`, `.md`, `.csv`,
-`.toml`, `.json`, `.yaml`, `.yml`, `.svg`. Anything else (`.png`,
+`.dat`, `.toml`, `.json`, `.yaml`, `.yml`, `.svg`. Anything else (`.png`,
 `.pdf`, ...) shows a metadata stub in the source pane: filename, size,
 type, "use in your TeX as `\includegraphics{name}`."
 
