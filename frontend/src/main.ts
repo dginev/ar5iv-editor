@@ -134,6 +134,20 @@ function splitPreamble(tex: string): { preamble: string | null; body: string } {
   return { preamble: "literal:" + m[1], body: m[2] };
 }
 
+// Mirrors the server's `contains_documentclass` (convert.rs): true iff the
+// source contains `\documentclass` outside a comment. Used to decide
+// preload shape — a full document loads its own packages, so we only
+// need ar5iv.sty in front; a fragment needs the article-class chain too.
+function hasDocumentclass(tex: string): boolean {
+  for (const line of tex.split("\n")) {
+    const trimmed = line.replace(/^\s+/, "");
+    if (trimmed.startsWith("%")) continue;
+    const idx = trimmed.indexOf("\\documentclass");
+    if (idx >= 0 && !trimmed.slice(0, idx).includes("%")) return true;
+  }
+  return false;
+}
+
 function bootExamples(switchExample: (slug: string) => void): void {
   const select = document.getElementById("example-select") as HTMLSelectElement;
   for (const ex of EXAMPLES_LIST) {
@@ -352,7 +366,14 @@ async function main(): Promise<void> {
   // tokenlimit=249999999)` before requiring latexml.sty. Once anything else
   // in the preload list triggers a latexml.sty load (article.cls and the
   // amsmath family do), the higher token limit can no longer be passed in.
-  const PRELOAD = [
+  //
+  // For fragment input (no \documentclass), we also preload the article
+  // class + the common math/color/link packages so the snippet renders
+  // without the user having to declare them. For full documents
+  // (\documentclass present) the source loads what it needs itself —
+  // we only need to ensure ar5iv.sty is in place first.
+  const PRELOAD_AR5IV_ONLY = ["ar5iv.sty"];
+  const PRELOAD_FRAGMENT = [
     "ar5iv.sty",
     "LaTeX.pool",
     "article.cls",
@@ -731,7 +752,7 @@ async function main(): Promise<void> {
       preamble: preamble ?? undefined,
       profile: "fragment",
       format: "html5",
-      preload: PRELOAD,
+      preload: hasDocumentclass(tex) ? PRELOAD_AR5IV_ONLY : PRELOAD_FRAGMENT,
     });
     statusEl().textContent = "converting…";
     startConvertTicker();
