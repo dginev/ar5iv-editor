@@ -132,7 +132,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         autoconf automake libtool make mold \
         ca-certificates \
         texlive-latex-base texlive-latex-recommended \
-        texlive-pictures texlive-latex-extra \
+        texlive-pictures texlive-latex-extra texlive-science \
     && rm -rf /var/lib/apt/lists/* \
     && rustup toolchain install nightly --profile minimal
 
@@ -184,7 +184,7 @@ FROM debian:bookworm-slim AS runtime
 # without manual fixups.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         texlive-latex-base texlive-latex-recommended \
-        texlive-pictures texlive-latex-extra \
+        texlive-pictures texlive-latex-extra texlive-science \
         libxml2 libxslt1.1 ca-certificates curl \
         imagemagick ghostscript \
     && rm -rf /var/lib/apt/lists/* \
