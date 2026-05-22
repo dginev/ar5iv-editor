@@ -348,7 +348,12 @@ async function main(): Promise<void> {
 
   // The convert preload list — kept here so the file-panel binary
   // stub and the WS frame agree on what's loaded.
+  // ar5iv.sty must come FIRST: it calls `pass_options("latexml", "sty", …,
+  // tokenlimit=249999999)` before requiring latexml.sty. Once anything else
+  // in the preload list triggers a latexml.sty load (article.cls and the
+  // amsmath family do), the higher token limit can no longer be passed in.
   const PRELOAD = [
+    "ar5iv.sty",
     "LaTeX.pool",
     "article.cls",
     "amsmath.sty",
@@ -359,7 +364,6 @@ async function main(): Promise<void> {
     "[dvipsnames]xcolor.sty",
     "url.sty",
     "hyperref.sty",
-    "ar5iv.sty",
   ];
 
   // Active file in the session, plus the session's last-known
