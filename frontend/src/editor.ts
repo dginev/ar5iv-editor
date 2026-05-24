@@ -64,6 +64,12 @@ export interface EditorHandle {
   setSource(text: string): void;
   /** Current contents of the active buffer (empty string if none). */
   getSource(): string;
+  /** Caret context for the preview sync: 1-based line + column of the main
+   *  selection head, plus the word token under the caret. The token is the
+   *  content-fingerprint used to land on the exact inline construct when its
+   *  source columns are unreliable (macro-argument text). Empty when the caret
+   *  is not in a word. */
+  getCursorPos(): { line: number; col: number; token: string };
   /** Subscribe to live edits on the active buffer. The callback
    *  receives the path and the new source on every doc change. */
   onChange(cb: (path: string, source: string) => void): void;
@@ -237,6 +243,18 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
     },
     getSource() {
       return view.state.doc.toString();
+    },
+    getCursorPos() {
+      const head = view.state.selection.main.head;
+      const line = view.state.doc.lineAt(head);
+      const offset = head - line.from; // 0-based index within the line
+      const text = line.text;
+      const isWord = (ch: string | undefined) => !!ch && /[A-Za-z0-9]/.test(ch);
+      let s = offset;
+      let e = offset;
+      while (s > 0 && isWord(text[s - 1])) s--;
+      while (e < text.length && isWord(text[e])) e++;
+      return { line: line.number, col: offset + 1, token: text.slice(s, e) };
     },
     onChange(cb) {
       onChangeCb = cb;

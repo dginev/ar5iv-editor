@@ -44,6 +44,12 @@ export interface ConvertResponse {
    *  attaches line-anchored entries to the editor and unanchored
    *  ones to the source-pane header badge. */
   diagnostics?: Diagnostic[];
+  /** Source-map decoder ring (`--source-map` runs): the file basename for
+   *  each integer source `tag` (array index = tag) used by the
+   *  `data-sourcepos` attributes in `result`. Lets the client resolve the
+   *  active file → tag and scroll the preview to the edited line. Absent /
+   *  empty when source-map is off. */
+  sources?: string[];
 }
 
 export interface ConvertClientOpts {

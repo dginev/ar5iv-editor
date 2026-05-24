@@ -78,6 +78,7 @@ fn worker_main(rx: std_mpsc::Receiver<Job>) {
                         log: String::new(),
                         timings: None,
                         diagnostics: Vec::new(),
+                        sources: Vec::new(),
                     });
                     req = newer_req;
                     session = newer_session;
@@ -178,6 +179,11 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         search_paths: Some(vec![session.dir.to_string_lossy().into_owned()]),
         include_comments: Some(false),
         nomathparse: None,
+        // Always on for the editor: the whole point of this backend is the
+        // live source↔preview sync, which rides the `data-sourcepos`
+        // attributes this stamps. The tag→file decoder is read back from the
+        // engine below (out-of-band, never inlined into the HTML).
+        source_map: Some(true),
     };
 
     let t_total = Instant::now();
@@ -195,6 +201,17 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
     let resp = converter.convert(abs_path.to_string_lossy().into_owned());
     let dt_convert = t1.elapsed();
 
+    // Source-map decoder: read this conversion's `tag → file` table straight
+    // from the engine's thread-local state. `Core::new` resets it on every
+    // `from_config`, so this is exactly *this* request's table — no stale
+    // entries from a prior conversion (or a prior user, on this shared
+    // worker). Basenames only: the table must not carry absolute
+    // session-tmpdir paths off the box (anonymity + no path leak).
+    let sources: Vec<String> = latexml_core::state::source_table_snapshot()
+        .iter()
+        .map(|sym| latexml_core::common::arena::with(*sym, path_basename))
+        .collect();
+
     let xml = match resp.result {
         Some(x) => x,
         None => {
@@ -208,6 +225,7 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
                 log: resp.log,
                 timings: None,
                 diagnostics,
+                sources,
             };
         }
     };
@@ -296,7 +314,16 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
             total_ms: dt_total.as_millis() as u64,
         }),
         diagnostics,
+        sources,
     }
+}
+
+/// The final path component of a recorded source identity, lowercased for
+/// case-insensitive `active_file` matching client-side. Keeps absolute
+/// session-tmpdir paths from leaving the box in the WS envelope (the engine
+/// records the path it was handed; the editor only needs the file's name).
+fn path_basename(p: &str) -> String {
+    p.rsplit(['/', '\\']).next().unwrap_or(p).to_ascii_lowercase()
 }
 
 /// Parse the engine's captured log buffer into structured
