@@ -561,3 +561,46 @@ function flashOnArrival(el: HTMLElement): void {
   };
   requestAnimationFrame(tick);
 }
+
+// ---------------------------------------------------------------------------
+// Reverse source-map sync: preview → source.
+//
+// The mirror of `scrollPreviewToSource`. On a double-click inside the rendered
+// HTML we find the nearest located construct (the closest `[data-sourcepos]`
+// ancestor of the click target) and report its source tag + start line/col so
+// the caller can move the editor caret there. Double-click (not single) so it
+// never competes with reading, text selection, or following a link.
+// ---------------------------------------------------------------------------
+
+/** A source position picked from the preview by the user: the construct's
+ *  integer `tag` (index into the conversion's `sources` table) plus its start
+ *  line/column. The caller resolves `tag` → file and reveals `line:col`. */
+export interface SourceNavTarget {
+  tag: number;
+  line: number;
+  col: number;
+}
+
+let sourceNavBound = false;
+
+/** Bind double-click → source navigation on the preview, once. The listener
+ *  sits on the persistent shadow host (not the morphed content), so it survives
+ *  every re-render without re-binding. On a double-click it walks up from the
+ *  target to the nearest `[data-sourcepos]` element — the most specific located
+ *  construct under the pointer — parses its locator, and hands the start
+ *  position to `onPick`. No-op when the click lands outside any located
+ *  construct (e.g. source-map off, so nothing is stamped; or whitespace between
+ *  blocks). */
+export function bindPreviewSourceNav(onPick: (t: SourceNavTarget) => void): void {
+  if (sourceNavBound) return;
+  const host = ensurePreviewHost();
+  host.addEventListener("dblclick", (ev) => {
+    const start = ev.target as Element | null;
+    const el = start?.closest?.("[data-sourcepos]") as HTMLElement | null;
+    if (!el) return;
+    const sp = parseSourcepos(el.getAttribute("data-sourcepos") ?? "");
+    if (!sp) return;
+    onPick({ tag: sp.fromTag, line: sp.fromLine, col: sp.fromCol });
+  });
+  sourceNavBound = true;
+}

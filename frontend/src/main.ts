@@ -1,7 +1,7 @@
 import "./styles.css";
 import { createEditor, type EditorTheme } from "./editor.ts";
 import { ConvertClient, type ConvertResponse, type Diagnostic } from "./ws.ts";
-import { renderResult, showLog, showEmptyState, setPreviewTheme, setPreviewChromeTheme, scrollPreviewToSource } from "./preview.ts";
+import { renderResult, showLog, showEmptyState, setPreviewTheme, setPreviewChromeTheme, scrollPreviewToSource, bindPreviewSourceNav } from "./preview.ts";
 import { EXAMPLES_LIST } from "./examples.ts";
 import {
   SessionClient,
@@ -171,6 +171,13 @@ function isTextPath(path: string): boolean {
   const dot = path.lastIndexOf(".");
   if (dot < 0) return false;
   return TEXT_EXTENSIONS.has(path.slice(dot + 1).toLowerCase());
+}
+
+/** Final path component, lowercased — matches the basenames the server puts in
+ *  the `sources` table, so a `data-sourcepos` tag can be resolved back to a
+ *  session file path. */
+function basename(path: string): string {
+  return (path.split(/[/\\]/).pop() ?? path).toLowerCase();
 }
 
 /** Pick the file the editor should show right after a fresh
@@ -371,6 +378,11 @@ async function main(): Promise<void> {
   // upload) — the UI sits idle until something lands in the tree.
   let activePath: string | null = pickInitialActivePath(session.envelope);
   let lastVersion = 0;
+  /** The most recent conversion's source-tag → basename table (`--source-map`
+   *  runs). Indexed by the integer `tag` in `data-sourcepos`; used by the
+   *  reverse sync (double-click in the preview) to resolve a clicked construct's
+   *  tag back to a session file. Empty when source-map is off. */
+  let lastSources: string[] = [];
 
   async function setActiveFile(path: string): Promise<void> {
     if (!isTextPath(path)) {
@@ -647,6 +659,9 @@ async function main(): Promise<void> {
     const t_render0 = performance.now();
     renderResult(resp.result);
     const t_render1 = performance.now();
+    // Keep the source-tag decoder current for the reverse sync (preview →
+    // source double-click). Each render replaces it; empty when source-map off.
+    lastSources = resp.sources ?? [];
     // Source-map sync: scroll the preview to the line this convert's
     // triggering edit was on (captured at schedule time). Only edit-driven
     // converts register a scroll target; boot / swap / navigation don't.
@@ -849,6 +864,48 @@ async function main(): Promise<void> {
       },
     });
   }
+
+  // -----------------------------------------------------------------
+  // Reverse source-map sync: double-click in the preview → jump to source.
+  // Bound once; the listener lives on the persistent preview host, so it
+  // survives every re-render. Resolution and navigation happen here, where the
+  // session file list, the editor, and the file panel are all in scope.
+  // -----------------------------------------------------------------
+  bindPreviewSourceNav(async (loc) => {
+    // Resolve the clicked construct's source tag to a file in this session.
+    // Tags index the last conversion's `sources` table (basenames); fall back
+    // to the active file — the single-file / no-table case, where every locator
+    // refers to it.
+    let file = activePath;
+    const base = lastSources[loc.tag];
+    if (base) {
+      const want = base.toLowerCase();
+      const match = session.envelope.files.find(
+        (f) => f.kind !== "dir" && basename(f.path) === want,
+      );
+      if (match) file = match.path;
+    }
+    if (!file || !isTextPath(file)) return;
+    try {
+      // Switching files first (if needed) so the caret lands in the right
+      // buffer; `setActiveFile` GETs + opens it, then we mirror the active
+      // marker into the file tree. A no-op when the construct is already in the
+      // active buffer.
+      if (file !== activePath) {
+        await setActiveFile(file);
+        filePanel?.setActiveFile(file);
+      }
+      editor.revealPosition(loc.line, loc.col);
+    } catch (e) {
+      if (e instanceof SessionExpiredError) {
+        await session.reopen();
+        rebuildWsClient();
+      } else {
+        console.error("source-nav open failed", e);
+        showToast(`Could not open ${file}: ${e}`, "error");
+      }
+    }
+  });
 
   async function handleSessionSwap(env: SessionEnvelope): Promise<number | null> {
     // The new session has its own filesystem; any cached buffers
