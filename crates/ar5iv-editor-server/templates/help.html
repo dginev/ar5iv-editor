@@ -29,6 +29,38 @@
         or <code>upload</code> in the file panel to start a project.</li>
   </ul>
 
+  <h2>Source &harr; preview sync</h2>
+  <p>
+    The editor and the preview stay anchored to each other through
+    <strong>source locators</strong>: as it converts, <code>latexml-oxide</code>
+    stamps every rendered construct with the source file, line, and column it
+    came from. Two navigation aids ride on that mapping &mdash; one in each
+    direction. Both work automatically; there is nothing to switch on.
+  </p>
+  <ul>
+    <li><strong>Scroll to preview location</strong> (editing &rarr; preview).
+        Every time the preview re-renders after an edit, it scrolls to and
+        briefly highlights the construct that matches where your caret was
+        sitting. So you keep typing and the right part of the rendered page
+        follows you &mdash; no hunting for what just changed.</li>
+    <li><strong>Scroll to editor location</strong> (preview &rarr; editing).
+        <strong>Double-click</strong> anywhere inside the preview to jump the
+        editor caret to the source that produced it: the matching line scrolls
+        to the centre of the source pane and pulses. If that construct came from
+        a different file (e.g. an <code>\input</code>ted chapter), the editor
+        switches to that buffer first. Single clicks are left alone, so reading,
+        selecting text, and following links all work as usual.</li>
+  </ul>
+  <p>
+    A note on precision: <em>line</em> numbers are exact, but <em>columns</em>
+    are best-effort &mdash; text inside a macro argument reports the column of
+    the macro rather than of the character, so the highlight covers the whole
+    matched construct (or whole line) rather than a single character. You always
+    land on the right line. Double-clicking in the blank space between blocks,
+    or anywhere that maps to no source (some generated content), simply does
+    nothing.
+  </p>
+
   <h2>The file panel</h2>
   <p>
     The leftmost column lists every file in your current session. Click any
