@@ -39,7 +39,14 @@ futures-util = { workspace = true }
 # `latexml` (== latexml_oxide) uses Rc / TLS / globals throughout, so we run
 # all conversions on a single dedicated 256 MB-stack worker thread (see
 # `convert.rs`). Adjust the path if the local checkout lives elsewhere.
-latexml = { path = "../../../latexml-oxide/latexml_oxide" }
+#
+# `token-locators` is REQUIRED here (not optional): the editor's whole point is
+# accurate source↔preview sync, which depends on the precision source-map
+# locators (content-exact construct spans, alignment, math, bibliography). The
+# feature propagates across the latexml-oxide crate graph, so requesting it on
+# `latexml` enables it for `latexml_core`/engine/etc. via feature unification.
+# Without it, conversions fall back to the heuristic (eating-disorder) locators.
+latexml = { path = "../../../latexml-oxide/latexml_oxide", features = ["token-locators"] }
 latexml_core = { path = "../../../latexml-oxide/latexml_core" }
 latexml_post = { path = "../../../latexml-oxide/latexml_post" }
 log = "0.4"
