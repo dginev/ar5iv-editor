@@ -47,6 +47,12 @@ WORKDIR /build
 # preview header can render a "powered by latexml-oxide @<sha>" link.
 ARG LATEXML_OXIDE_SHA=unknown
 ARG LATEXML_OXIDE_DATE=unknown
+# Optional cargo job cap for memory/thermal-constrained build hosts.
+# `0` (default) = cargo's default (all logical CPUs). Pass e.g.
+# `--build-arg CARGO_JOBS=6` to bound the concurrent rustc/codegen
+# threads; matters most because BuildKit runs the builder and formats
+# stages in parallel, so two uncapped cargo builds can thrash a host.
+ARG CARGO_JOBS=0
 
 ENV RUST_MIN_STACK=16777216 \
     RUSTFLAGS="-C target-cpu=x86-64-v3" \
@@ -90,6 +96,7 @@ WORKDIR /build/ar5iv-editor
 # already-downloaded crate sources.
 RUN --mount=type=cache,target=/build/ar5iv-editor/target,sharing=locked,id=ar5iv-editor-target \
     --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked,id=cargo-registry \
+    if [ "$CARGO_JOBS" != 0 ]; then export CARGO_BUILD_JOBS="$CARGO_JOBS"; fi && \
     cargo build --release -p ar5iv-editor-server && \
     cp target/release/ar5iv-editor /tmp/ar5iv-editor
 
@@ -109,6 +116,9 @@ RUN --mount=type=cache,target=/build/ar5iv-editor/target,sharing=locked,id=ar5iv
 
 FROM rust:1-slim-bookworm AS formats
 WORKDIR /build
+
+# Same optional cargo job cap as the builder stage (stage-scoped ARG).
+ARG CARGO_JOBS=0
 
 # latexml-oxide's `.cargo/config.toml` uses `-Zunstable-options` and
 # pins a nightly-only linker flag, so a stable rustc fails immediately.
@@ -157,6 +167,7 @@ RUN rm -rf target
 # build different package sets (debug vs release, different bin).
 RUN --mount=type=cache,target=/build/latexml-oxide/target,sharing=locked,id=latexml-oxide-target-debug \
     --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked,id=cargo-registry \
+    if [ "$CARGO_JOBS" != 0 ]; then export CARGO_BUILD_JOBS="$CARGO_JOBS"; fi && \
     tools/make_formats.sh
 
 # --------------------------------------------------------------------

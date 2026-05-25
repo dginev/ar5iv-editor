@@ -1,4 +1,12 @@
-import { EditorState, Compartment, Prec, type Extension } from "@codemirror/state";
+import {
+  EditorState,
+  EditorSelection,
+  StateField,
+  StateEffect,
+  Compartment,
+  Prec,
+  type Extension,
+} from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -6,6 +14,8 @@ import {
   highlightActiveLine,
   highlightSpecialChars,
   drawSelection,
+  Decoration,
+  type DecorationSet,
 } from "@codemirror/view";
 import {
   defaultKeymap,
@@ -64,6 +74,18 @@ export interface EditorHandle {
   setSource(text: string): void;
   /** Current contents of the active buffer (empty string if none). */
   getSource(): string;
+  /** Caret context for the preview sync: 1-based line + column of the main
+   *  selection head, plus the word token under the caret. The token is the
+   *  content-fingerprint used to land on the exact inline construct when its
+   *  source columns are unreliable (macro-argument text). Empty when the caret
+   *  is not in a word. */
+  getCursorPos(): { line: number; col: number; token: string };
+  /** Move the caret to (1-based) `line`:`col` in the active buffer, scroll
+   *  that line to the centre of the viewport, and briefly pulse it. Drives the
+   *  reverse source-map sync (double-click a construct in the preview → jump to
+   *  its source). The caller switches to the correct buffer first; this acts on
+   *  whatever buffer is active. Out-of-range line/col are clamped to the doc. */
+  revealPosition(line: number, col: number): void;
   /** Subscribe to live edits on the active buffer. The callback
    *  receives the path and the new source on every doc change. */
   onChange(cb: (path: string, source: string) => void): void;
@@ -84,6 +106,41 @@ interface Buffer {
   state:  EditorState;
   scroll: number;
 }
+
+// --- Reverse source-map sync: transient line flash ------------------------
+// When the user double-clicks a located construct in the preview, the editor
+// jumps to the matching source line and pulses it so the eye can find the
+// caret's new home. A one-line decoration toggled by a state effect (set on
+// arrival, cleared after the pulse); the colour fade is a CSS keyframe so it
+// costs nothing after the dispatch. `--accent` cascades from the chrome theme,
+// matching the preview's own arrival highlight.
+const setNavFlash = StateEffect.define<number | null>();
+const navFlashDeco = Decoration.line({ class: "cm-nav-flash" });
+const navFlashField = StateField.define<DecorationSet>({
+  create() {
+    return Decoration.none;
+  },
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(setNavFlash)) {
+        deco =
+          e.value === null
+            ? Decoration.none
+            : Decoration.set([navFlashDeco.range(e.value)]);
+      }
+    }
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+const navFlashTheme = EditorView.theme({
+  ".cm-nav-flash": { animation: "cm-nav-flash 1.5s ease-out" },
+  "@keyframes cm-nav-flash": {
+    from: { backgroundColor: "color-mix(in srgb, var(--accent, #026ecb) 50%, transparent)" },
+    to: { backgroundColor: "color-mix(in srgb, var(--accent, #026ecb) 0%, transparent)" },
+  },
+});
 
 export function createEditor(host: HTMLElement, initialTheme: EditorTheme): EditorHandle {
   const buffers = new Map<string, Buffer>();
@@ -135,8 +192,14 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
       { backgroundColor: "color-mix(in srgb, var(--accent) 18%, transparent) !important" },
   });
 
+  // Timer that clears the reverse-sync line flash after its pulse; tracked so
+  // a rapid second jump cancels the first instead of clearing mid-pulse.
+  let navFlashTimer: number | undefined;
+
   const buildExtensions = (theme: EditorTheme): Extension[] => [
     lineNumbers(),
+    navFlashField,
+    navFlashTheme,
     // Lint plumbing — diagnostics are pushed from outside (the
     // convert engine) via `setDiagnostics` below. Passing `null`
     // as the linter source pre-installs the lint state field at
@@ -237,6 +300,44 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
     },
     getSource() {
       return view.state.doc.toString();
+    },
+    getCursorPos() {
+      const head = view.state.selection.main.head;
+      const line = view.state.doc.lineAt(head);
+      const offset = head - line.from; // 0-based index within the line
+      const text = line.text;
+      const isWord = (ch: string | undefined) => !!ch && /[A-Za-z0-9]/.test(ch);
+      let s = offset;
+      let e = offset;
+      while (s > 0 && isWord(text[s - 1])) s--;
+      while (e < text.length && isWord(text[e])) e++;
+      return { line: line.number, col: offset + 1, token: text.slice(s, e) };
+    },
+    revealPosition(line, col) {
+      // Defer one frame: when the caller just switched buffers, `openBuffer`
+      // has queued a scroll-restore rAF; running after it lets our centring
+      // scroll win instead of being clobbered by the restored scrollTop.
+      requestAnimationFrame(() => {
+        const doc = view.state.doc;
+        const lineNo = Math.max(1, Math.min(line, doc.lines));
+        const ln = doc.line(lineNo);
+        // Columns are best-effort upstream (macro-argument text reports its
+        // construct's end column — Bruce #101), so clamp into the line; the
+        // line is authoritative and the whole-line flash hides any column slip.
+        const pos = ln.from + Math.max(0, Math.min((col || 1) - 1, ln.length));
+        view.dispatch({
+          selection: EditorSelection.cursor(pos),
+          effects: [
+            EditorView.scrollIntoView(pos, { y: "center" }),
+            setNavFlash.of(ln.from),
+          ],
+        });
+        view.focus();
+        if (navFlashTimer !== undefined) window.clearTimeout(navFlashTimer);
+        navFlashTimer = window.setTimeout(() => {
+          view.dispatch({ effects: setNavFlash.of(null) });
+        }, 1500);
+      });
     },
     onChange(cb) {
       onChangeCb = cb;

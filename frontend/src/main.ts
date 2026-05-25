@@ -1,7 +1,7 @@
 import "./styles.css";
 import { createEditor, type EditorTheme } from "./editor.ts";
 import { ConvertClient, type ConvertResponse, type Diagnostic } from "./ws.ts";
-import { renderResult, showLog, showEmptyState, setPreviewTheme, setPreviewChromeTheme } from "./preview.ts";
+import { renderResult, showLog, showEmptyState, setPreviewTheme, setPreviewChromeTheme, scrollPreviewToSource, bindPreviewSourceNav } from "./preview.ts";
 import { EXAMPLES_LIST } from "./examples.ts";
 import {
   SessionClient,
@@ -185,6 +185,13 @@ function isTextPath(path: string): boolean {
   const dot = path.lastIndexOf(".");
   if (dot < 0) return false;
   return TEXT_EXTENSIONS.has(path.slice(dot + 1).toLowerCase());
+}
+
+/** Final path component, lowercased — matches the basenames the server puts in
+ *  the `sources` table, so a `data-sourcepos` tag can be resolved back to a
+ *  session file path. */
+function basename(path: string): string {
+  return (path.split(/[/\\]/).pop() ?? path).toLowerCase();
 }
 
 /** Pick the file the editor should show right after a fresh
@@ -396,6 +403,11 @@ async function main(): Promise<void> {
   // upload) — the UI sits idle until something lands in the tree.
   let activePath: string | null = pickInitialActivePath(session.envelope);
   let lastVersion = 0;
+  /** The most recent conversion's source-tag → basename table (`--source-map`
+   *  runs). Indexed by the integer `tag` in `data-sourcepos`; used by the
+   *  reverse sync (double-click in the preview) to resolve a clicked construct's
+   *  tag back to a session file. Empty when source-map is off. */
+  let lastSources: string[] = [];
 
   async function setActiveFile(path: string): Promise<void> {
     if (!isTextPath(path)) {
@@ -534,6 +546,11 @@ async function main(): Promise<void> {
   let client: ConvertClient | null = null;
   let latestSeenId = 0;
   const sentAt = new Map<number, number>();
+  /** request id → the source line + file to scroll the preview to once *this*
+   *  convert renders. Set only for edit-triggered converts (the boot / example-
+   *  swap / file-navigation converts deliberately don't scroll). Cleaned up in
+   *  every settle branch so a cancelled request never leaves a stale entry. */
+  const requestScroll = new Map<number, { line: number; col: number; token: string; file: string }>();
   /** Toggle every "convert in flight" affordance based on
    *  `sentAt.size`: the preview-pane diagonal-stripe watermark and a
    *  page-wide `progress` cursor on the body. Driven by `sentAt.size`
@@ -620,6 +637,7 @@ async function main(): Promise<void> {
   const onWsMessage = (resp: ConvertResponse) => {
     if (resp.id < latestSeenId) {
       sentAt.delete(resp.id);
+      requestScroll.delete(resp.id);
       syncLoadingIndicator();
       if (sentAt.size === 0) stopConvertTicker();
       settleAwaiter(resp.id);
@@ -627,6 +645,7 @@ async function main(): Promise<void> {
     }
     if (resp.status === "superseded") {
       sentAt.delete(resp.id);
+      requestScroll.delete(resp.id);
       syncLoadingIndicator();
       if (sentAt.size === 0) stopConvertTicker();
       settleAwaiter(resp.id);
@@ -636,6 +655,7 @@ async function main(): Promise<void> {
       // session_expired — reopen and re-trigger preview.
       statusEl().textContent = "session expired — reopening";
       showToast("Session expired — reopening", "warn");
+      requestScroll.delete(resp.id);
       settleAwaiter(resp.id);
       // Don't clear the loading indicator here: we're about to fire a
       // fresh convert which will re-add it anyway, and clearing in the
@@ -653,6 +673,7 @@ async function main(): Promise<void> {
     if (resp.status_code === 3) {
       statusEl().textContent = "fatal";
       showLog(resp.log);
+      requestScroll.delete(resp.id);
       syncLoadingIndicator();
       if (sentAt.size === 0) stopConvertTicker();
       settleAwaiter(resp.id);
@@ -663,6 +684,19 @@ async function main(): Promise<void> {
     const t_render0 = performance.now();
     renderResult(resp.result);
     const t_render1 = performance.now();
+    // Keep the source-tag decoder current for the reverse sync (preview →
+    // source double-click). Each render replaces it; empty when source-map off.
+    lastSources = resp.sources ?? [];
+    // Source-map sync: scroll the preview to the line this convert's
+    // triggering edit was on (captured at schedule time). Only edit-driven
+    // converts register a scroll target; boot / swap / navigation don't.
+    const scroll = requestScroll.get(resp.id);
+    requestScroll.delete(resp.id);
+    // Drop any older scroll targets orphaned by silently-cancelled requests.
+    for (const k of [...requestScroll.keys()]) {
+      if (k < resp.id) requestScroll.delete(k);
+    }
+    if (scroll) scrollPreviewToSource(scroll.line, scroll.col, scroll.token, scroll.file, resp.sources);
     logEl().textContent = resp.log;
     // Drop any orphaned older slots (cancelled requests that the WS
     // handler quietly dropped). Then hard-clear the watermark — the
@@ -727,7 +761,7 @@ async function main(): Promise<void> {
    *    - active path was deleted out from under us and no
    *      replacement has been picked yet (would otherwise surface as
    *      "active_file: No such file or directory" server-side) */
-  const scheduleConvert = (): number | null => {
+  const scheduleConvert = (scrollToCursor = false): number | null => {
     if (!client || !activePath) {
       maybeShowEmptyState();
       return null;
@@ -743,6 +777,13 @@ async function main(): Promise<void> {
     }
     const id = nextId++;
     sentAt.set(id, performance.now());
+    // Remember where to scroll once this convert renders (edit-driven only).
+    // Captured now (at the debounce tail) while the caret still sits on the
+    // just-edited line.
+    if (scrollToCursor) {
+      const pos = editor.getCursorPos();
+      requestScroll.set(id, { line: pos.line, col: pos.col, token: pos.token, file: activePath });
+    }
     const tex = editor.getSource();
     const { preamble } = splitPreamble(tex);
     client.send({
@@ -769,7 +810,7 @@ async function main(): Promise<void> {
       try {
         const ack = await session.putText(path, tex);
         lastVersion = ack.version;
-        scheduleConvert();
+        scheduleConvert(true);
       } catch (e) {
         if (e instanceof SessionExpiredError) {
           statusEl().textContent = "session expired — reopening";
@@ -778,7 +819,7 @@ async function main(): Promise<void> {
           try {
             const ack2 = await session.putText(path, tex);
             lastVersion = ack2.version;
-            scheduleConvert();
+            scheduleConvert(true);
           } catch (e2) {
             showToast(`Save failed after reconnect: ${e2}`, "error");
             statusEl().textContent = "save failed";
@@ -848,6 +889,48 @@ async function main(): Promise<void> {
       },
     });
   }
+
+  // -----------------------------------------------------------------
+  // Reverse source-map sync: double-click in the preview → jump to source.
+  // Bound once; the listener lives on the persistent preview host, so it
+  // survives every re-render. Resolution and navigation happen here, where the
+  // session file list, the editor, and the file panel are all in scope.
+  // -----------------------------------------------------------------
+  bindPreviewSourceNav(async (loc) => {
+    // Resolve the clicked construct's source tag to a file in this session.
+    // Tags index the last conversion's `sources` table (basenames); fall back
+    // to the active file — the single-file / no-table case, where every locator
+    // refers to it.
+    let file = activePath;
+    const base = lastSources[loc.tag];
+    if (base) {
+      const want = base.toLowerCase();
+      const match = session.envelope.files.find(
+        (f) => f.kind !== "dir" && basename(f.path) === want,
+      );
+      if (match) file = match.path;
+    }
+    if (!file || !isTextPath(file)) return;
+    try {
+      // Switching files first (if needed) so the caret lands in the right
+      // buffer; `setActiveFile` GETs + opens it, then we mirror the active
+      // marker into the file tree. A no-op when the construct is already in the
+      // active buffer.
+      if (file !== activePath) {
+        await setActiveFile(file);
+        filePanel?.setActiveFile(file);
+      }
+      editor.revealPosition(loc.line, loc.col);
+    } catch (e) {
+      if (e instanceof SessionExpiredError) {
+        await session.reopen();
+        rebuildWsClient();
+      } else {
+        console.error("source-nav open failed", e);
+        showToast(`Could not open ${file}: ${e}`, "error");
+      }
+    }
+  });
 
   async function handleSessionSwap(env: SessionEnvelope): Promise<number | null> {
     // The new session has its own filesystem; any cached buffers

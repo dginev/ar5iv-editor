@@ -82,6 +82,14 @@ pub struct ConvertResponse {
     /// unanchored ones in a header badge). Empty for clean runs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<Diagnostic>,
+    /// Source-map decoder ring for `--source-map` runs: the file basename for
+    /// each integer source `tag` (the array index *is* the tag) carried by the
+    /// `data-sourcepos` attributes in `result`. Source-Map-v3 `sources`-style.
+    /// Kept out of the HTML so the served preview stays anonymisable; it rides
+    /// this envelope so the editor can resolve `active_file` → tag and scroll
+    /// the preview to the edited source line. Empty when source-map is off.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +134,7 @@ impl ConvertResponse {
             log: msg,
             timings: None,
             diagnostics: Vec::new(),
+            sources: Vec::new(),
         }
     }
 
@@ -142,6 +151,7 @@ impl ConvertResponse {
             log: String::new(),
             timings: None,
             diagnostics: Vec::new(),
+            sources: Vec::new(),
         }
     }
 }
