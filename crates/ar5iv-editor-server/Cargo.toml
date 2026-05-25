@@ -35,15 +35,10 @@ anyhow = { workspace = true }
 num_cpus = { workspace = true }
 futures-util = { workspace = true }
 
-# The real conversion engine — published on crates.io as `latexml`:
-#   latexml = { version = "0.5", features = ["token-locators"] }
-# Pinned to a path dep here so the editor tracks the local dev tree: the
-# crates.io release must carry the `token-locators` feature (added in the
-# source-map work, not in the published 0.0.2 yet) — switch to the version dep
-# above once a release ships it. `latexml` (== latexml_oxide) uses Rc / TLS /
-# globals throughout, so we run all conversions on a single dedicated 256 MB-stack
-# worker thread (see `convert.rs`). Adjust the path if the local checkout lives
-# elsewhere.
+# The real conversion engine (https://github.com/dginev/latexml-oxide).
+# Path dep to a local checkout that deploy keeps synced to the default branch
+# (master) — see deploy/release.sh (`LATEXML_OXIDE_REF`, default `master`).
+# Adjust the path if the local checkout lives elsewhere.
 #
 # `token-locators` is REQUIRED here (not optional): the editor's whole point is
 # accurate source↔preview sync, which depends on the precision source-map
@@ -51,6 +46,9 @@ futures-util = { workspace = true }
 # feature propagates across the latexml-oxide crate graph, so requesting it on
 # `latexml` enables it for `latexml_core`/engine/etc. via feature unification.
 # Without it, conversions fall back to the heuristic (eating-disorder) locators.
+#
+# `latexml` (== latexml_oxide) uses Rc / TLS / globals throughout, so we run all
+# conversions on a single dedicated 256 MB-stack worker thread (see `convert.rs`).
 latexml = { path = "../../../latexml-oxide/latexml_oxide", features = ["token-locators"] }
 latexml_core = { path = "../../../latexml-oxide/latexml_core" }
 latexml_post = { path = "../../../latexml-oxide/latexml_post" }
