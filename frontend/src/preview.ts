@@ -583,24 +583,74 @@ export interface SourceNavTarget {
 
 let sourceNavBound = false;
 
+/** Char offset of the viewport point `(x, y)` within `leaf`'s rendered text, or
+ *  `null` when it can't be resolved (point outside the leaf, or no caret API).
+ *  Pierces the preview shadow tree — the standard caret-from-point APIs return
+ *  shadow-internal nodes. Used to refine a reverse-nav click from the leaf's
+ *  start to the exact character. */
+function clickCharOffset(leaf: HTMLElement, x: number, y: number): number | null {
+  let node: Node | null = null;
+  let offset = 0;
+  const d = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+  if (typeof d.caretPositionFromPoint === "function") {
+    const pos = d.caretPositionFromPoint(x, y); // standard (Firefox)
+    if (pos) {
+      node = pos.offsetNode;
+      offset = pos.offset;
+    }
+  } else if (typeof d.caretRangeFromPoint === "function") {
+    const r = d.caretRangeFromPoint(x, y); // WebKit / Blink
+    if (r) {
+      node = r.startContainer;
+      offset = r.startOffset;
+    }
+  }
+  if (!node || !leaf.contains(node)) return null;
+  const pre = document.createRange();
+  pre.selectNodeContents(leaf);
+  try {
+    pre.setEnd(node, offset);
+  } catch {
+    return null;
+  }
+  return pre.toString().length;
+}
+
 /** Bind double-click → source navigation on the preview, once. The listener
  *  sits on the persistent shadow host (not the morphed content), so it survives
- *  every re-render without re-binding. On a double-click it walks up from the
- *  target to the nearest `[data-sourcepos]` element — the most specific located
- *  construct under the pointer — parses its locator, and hands the start
- *  position to `onPick`. No-op when the click lands outside any located
- *  construct (e.g. source-map off, so nothing is stamped; or whitespace between
- *  blocks). */
+ *  every re-render without re-binding.
+ *
+ *  `closest` descends to the **tightest** located element under the pointer —
+ *  with the precision locators that is a leaf: a math symbol (`<mi>`/`<mo>`), a
+ *  table cell, a content-exact text run. Within a single-line leaf we then
+ *  refine to the **exact character**: interpolate the click's char offset into
+ *  the leaf's `[fromCol..toCol]` range (clamped), so a double-click lands on the
+ *  source character under the pointer, not just the construct's start. Falls
+ *  back to the leaf's start when the offset can't be resolved or the leaf spans
+ *  multiple lines. The line stays authoritative (columns are best-effort under
+ *  macro expansion — Bruce #101). No-op when the click is outside any located
+ *  construct (source-map off, or whitespace between blocks). */
 export function bindPreviewSourceNav(onPick: (t: SourceNavTarget) => void): void {
   if (sourceNavBound) return;
   const host = ensurePreviewHost();
   host.addEventListener("dblclick", (ev) => {
     const start = ev.target as Element | null;
-    const el = start?.closest?.("[data-sourcepos]") as HTMLElement | null;
-    if (!el) return;
-    const sp = parseSourcepos(el.getAttribute("data-sourcepos") ?? "");
+    const leaf = start?.closest?.("[data-sourcepos]") as HTMLElement | null;
+    if (!leaf) return;
+    const sp = parseSourcepos(leaf.getAttribute("data-sourcepos") ?? "");
     if (!sp) return;
-    onPick({ tag: sp.fromTag, line: sp.fromLine, col: sp.fromCol });
+    let col = sp.fromCol;
+    if (sp.fromLine === sp.toLine && sp.toCol >= sp.fromCol) {
+      const me = ev as MouseEvent;
+      const off = clickCharOffset(leaf, me.clientX, me.clientY);
+      if (off != null) {
+        col = sp.fromCol + Math.min(off, sp.toCol - sp.fromCol);
+      }
+    }
+    onPick({ tag: sp.fromTag, line: sp.fromLine, col });
   });
   sourceNavBound = true;
 }
