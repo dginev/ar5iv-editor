@@ -565,7 +565,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1091,7 +1091,7 @@ dependencies = [
 
 [[package]]
 name = "latexml"
-version = "0.5.0"
+version = "0.6.2"
 dependencies = [
  "clap",
  "flate2",
@@ -1119,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_codegen"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "glob",
  "latexml_core",
@@ -1132,7 +1132,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_contrib"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "latexml_codegen",
  "latexml_core",
@@ -1143,7 +1143,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "kpathsea",
  "libxml",
@@ -1162,7 +1162,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_engine"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "flate2",
@@ -1178,7 +1178,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_math_parser"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "latexml_core",
  "libxml",
@@ -1192,7 +1192,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_package"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64",
  "latexml_codegen",
@@ -1206,7 +1206,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_post"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "flate2",
  "imagesize",
@@ -1446,7 +1446,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1884,7 +1884,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2197,7 +2197,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
