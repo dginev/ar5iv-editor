@@ -18,16 +18,24 @@
 # generating them locally avoids dragging trang + Java + Node into
 # the docker pipeline. The Rust binary (libxml2 ABI) and the TeX
 # format dumps (TeX-Live version) stay in dedicated stages here
-# because both are tied to bookworm's exact ABI / package set.
+# because both are tied to the runtime OS's exact ABI / TeX Live.
 #
 # Use `deploy/build-and-push.sh` from the repo root for the canonical
 # invocation; running `docker build` directly will fail at the
 # `COPY frontend/dist` / `COPY schema-docs` lines.
 #
 # Notes:
-# - rustup auto-installs nightly per `rust-toolchain.toml` on the
-#   first cargo invocation, so the standard `rust:slim` image works
-#   without a manual `rustup default nightly` step.
+# - All three stages are Ubuntu 24.04 (Noble). Its TeX Live 2023 ships
+#   `kpathsea 6.3.5`, which exactly matches the embedded `*.2023.dump.txt`
+#   stamp — so the runtime dump-stamp check finds no TeXLive skew (Debian
+#   bookworm's TL2022/6.3.4 and trixie's 6.4.0/dev both mismatch the bundled
+#   2023/2025 dumps). Keeping builder + formats + runtime on the same OS also
+#   keeps the binary's libxml2 / libkpathsea / glibc ABI consistent.
+# - The official `rust` images are Debian-based, so the two Rust stages install
+#   the toolchain via rustup (no default toolchain; the first cargo invocation
+#   auto-installs the nightly pinned by `rust-toolchain.toml`). rustup/cargo live
+#   under `/usr/local/{rustup,cargo}` (the `rust` image layout) so the BuildKit
+#   cargo-registry cache mount is shared across stages.
 # - Default rustflags are `-C target-cpu=x86-64-v3` (Haswell-class
 #   baseline: AVX2 / BMI2 / FMA / F16C / LZCNT / MOVBE / OSXSAVE).
 #   Overrides the repo's local `target-cpu=native` so the resulting
@@ -35,10 +43,8 @@
 #   so we don't depend on a specific Xeon SP generation.
 # - `RUST_MIN_STACK=16777216` matches the project's `.cargo/config.toml` —
 #   `latexml_contrib` overflows rustc's 8 MB default stack at compile time.
-# - Final stage uses Debian slim with TeX Live so `kpsewhich` is available
-#   for the engine's package-resolution fallback.
 
-FROM rust:1-slim-bookworm AS builder
+FROM ubuntu:24.04 AS builder
 WORKDIR /build
 
 # Captured at script-time by `deploy/build-and-push.sh` and forwarded
@@ -54,18 +60,23 @@ ARG LATEXML_OXIDE_DATE=unknown
 # stages in parallel, so two uncapped cargo builds can thrash a host.
 ARG CARGO_JOBS=0
 
-ENV RUST_MIN_STACK=16777216 \
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH \
+    RUST_MIN_STACK=16777216 \
     RUSTFLAGS="-C target-cpu=x86-64-v3" \
     CARGO_TERM_COLOR=always \
     LATEXML_OXIDE_SHA=$LATEXML_OXIDE_SHA \
     LATEXML_OXIDE_DATE=$LATEXML_OXIDE_DATE
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential curl ca-certificates \
         pkg-config libxml2-dev libxslt1-dev libssl-dev clang \
         libkpathsea-dev \
         autoconf automake libtool make \
-        ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --no-modify-path --default-toolchain none --profile minimal
 
 COPY ar5iv-editor/rust-toolchain.toml /build/ar5iv-editor/rust-toolchain.toml
 COPY ar5iv-editor/Cargo.toml /build/ar5iv-editor/Cargo.toml
@@ -114,7 +125,7 @@ RUN --mount=type=cache,target=/build/ar5iv-editor/target,sharing=locked,id=ar5iv
 # and is discarded with the stage, so optimizing it would just trade
 # linker time for nothing.
 
-FROM rust:1-slim-bookworm AS formats
+FROM ubuntu:24.04 AS formats
 WORKDIR /build
 
 # Same optional cargo job cap as the builder stage (stage-scoped ARG).
@@ -123,9 +134,13 @@ ARG CARGO_JOBS=0
 # latexml-oxide's `.cargo/config.toml` uses `-Zunstable-options` and
 # pins a nightly-only linker flag, so a stable rustc fails immediately.
 # `RUSTUP_TOOLCHAIN=nightly` makes the rustup proxy auto-install +
-# select the latest nightly on first cargo invocation, matching how
-# the builder stage already handles it via `rust-toolchain.toml`.
-ENV RUST_MIN_STACK=16777216 \
+# select the latest nightly on first cargo invocation. rustup/cargo live
+# under `/usr/local/{rustup,cargo}` to match the builder stage and share
+# the cargo-registry cache mount.
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH \
+    RUST_MIN_STACK=16777216 \
     CARGO_TERM_COLOR=always \
     RUSTUP_TOOLCHAIN=nightly
 
@@ -137,13 +152,15 @@ ENV RUST_MIN_STACK=16777216 \
 # get its state into the dump (so `_base` reconstruction kicks in
 # anyway). Cheaper to align here than diagnose mismatch later.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential curl ca-certificates \
         pkg-config libxml2-dev libxslt1-dev libssl-dev clang \
         libkpathsea-dev libkpathsea6 \
         autoconf automake libtool make mold \
-        ca-certificates \
         texlive-latex-base texlive-latex-recommended \
         texlive-pictures texlive-latex-extra texlive-science \
     && rm -rf /var/lib/apt/lists/* \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --no-modify-path --default-toolchain none --profile minimal \
     && rustup toolchain install nightly --profile minimal
 
 COPY latexml-oxide /build/latexml-oxide
@@ -153,10 +170,9 @@ WORKDIR /build/latexml-oxide
 # `.dockerignore`, so a host `cargo build` in latexml-oxide leaks
 # its `target/` into the image. `make_formats.sh` then finds the
 # pre-built binary, skips the in-image rebuild, and runs it — but
-# the host binary was linked against the host's newer libxml2 (e.g.
-# libxml2.so.16 on a recent Debian/Ubuntu) which doesn't exist in
-# this bookworm-based stage. Removing it forces a clean
-# in-image build that links against bookworm's libxml2.so.2.
+# the host binary was linked against the host's libxml2, which may differ
+# from this stage's (Ubuntu 24.04 ships libxml2.so.2 / 2.9.14). Removing it
+# forces a clean in-image build that links against this stage's libs.
 RUN rm -rf target
 # Same BuildKit cache pattern as the builder stage: cargo's
 # incremental survives between rebuilds. `make_formats.sh` invokes
@@ -172,7 +188,7 @@ RUN --mount=type=cache,target=/build/latexml-oxide/target,sharing=locked,id=late
 
 # --------------------------------------------------------------------
 
-FROM debian:bookworm-slim AS runtime
+FROM ubuntu:24.04 AS runtime
 
 # imagemagick + ghostscript are needed by latexml_post::graphics to
 # rasterize PDF / EPS / PS into PNG. Without them every
@@ -180,7 +196,7 @@ FROM debian:bookworm-slim AS runtime
 # engine maps PDF→PNG in its type table but can't run the convert
 # subprocess.
 #
-# Debian's default ImageMagick policy.xml disables PDF reading
+# The distro's default ImageMagick policy.xml disables PDF reading
 # (CVE-2018-16323 mitigation). For our demo we trust the input — the
 # engine has already validated the path and the upload allowlist
 # already restricts what can land. Remove the PDF-deny line so the
