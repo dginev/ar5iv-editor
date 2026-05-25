@@ -431,9 +431,16 @@ export function scrollPreviewToSource(
     if (!sp) continue;
     const span = Math.abs(sp.toLine - sp.fromLine);
     const key = rankKey(sp.fromLine, sp.fromCol, span, line, col);
-    if (any === null || keyLt(key, any.key)) any = { el, key };
+    // On an EQUAL key, prefer the LATER element in document order — the deeper,
+    // more-specific node (the <h2> over its wrapping <section>, which share a
+    // heading range; the <p> over its <div>). `!keyLt(cur, key)` ⇔ key <= cur,
+    // so ties replace. Without this, a caret at the *trailing edge* of a heading
+    // (past the last stamped column, e.g. right after a freshly-typed char) —
+    // where no element's range `within`s the caret and the anchor decides — kept
+    // the enclosing <section> and highlighted the whole section body.
+    if (any === null || !keyLt(any.key, key)) any = { el, key };
     if (wantTag !== null && sp.fromTag !== wantTag) continue;
-    if (matched === null || keyLt(key, matched.key)) matched = { el, key };
+    if (matched === null || !keyLt(matched.key, key)) matched = { el, key };
     // Tightest element whose RANGE actually contains the caret. Well-ranged
     // constructs (e.g. a section title `0:490:1-0:490:26`) win here. On an
     // identical range the LAST in document order wins — the deeper, more
@@ -483,6 +490,29 @@ export function scrollPreviewToSource(
       };
       consider(block);
       block.querySelectorAll("*").forEach(consider);
+      if (best !== null) target = (best as { el: Element }).el as HTMLElement;
+    } else if (containing === null) {
+      // Out-of-source-order frontmatter. `\title` (and on some classes `\date`,
+      // `\subtitle`) render at the top of the preview with NO locator — the
+      // `\maketitle` deferral drops the token origins upstream — so the edited
+      // preamble line sits inside no stamped range and the range pick is a
+      // coarse ancestor (the <article>), which flashes the whole document.
+      // Map by content instead: the shortest FRONTMATTER element whose rendered
+      // text contains the edited word. Scoped to frontmatter selectors so body
+      // prose can't false-match; shortest-wins so we land on the title/name
+      // itself rather than a wrapper. (`\author` already gets a real locator, so
+      // it goes through the range path; this is the no-locator safety net.)
+      let best: { el: Element; len: number } | null = null;
+      host
+        .querySelectorAll(
+          ".ltx_title_document,.ltx_subtitle,.ltx_personname,.ltx_creator,.ltx_date,.ltx_keywords,.ltx_classification,.ltx_role",
+        )
+        .forEach((el) => {
+          const txt = el.textContent ?? "";
+          if (txt.includes(token) && (best === null || txt.length < best.len)) {
+            best = { el, len: txt.length };
+          }
+        });
       if (best !== null) target = (best as { el: Element }).el as HTMLElement;
     }
   }
