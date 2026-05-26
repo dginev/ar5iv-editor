@@ -1,0 +1,134 @@
+{
+  "name": "ar5iv-vscode",
+  "displayName": "ar5iv Preview",
+  "description": "Live ar5iv preview for LaTeX documents in VS Code.",
+  "version": "0.0.1",
+  "publisher": "ar5iv",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dginev/ar5iv-editor.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/desktop/extension.js",
+  "browser": "./dist/web/extension.js",
+  "activationEvents": [
+    "onLanguage:latex",
+    "onCommand:ar5iv.openPreview",
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "latex",
+        "aliases": ["LaTeX", "latex", "tex"],
+        "extensions": [".tex", ".ltx", ".latex"]
+      }
+    ],
+    "commands": [
+      {
+        "command": "ar5iv.openPreview",
+        "title": "ar5iv: Open Preview"
+      }
+    ],
+    "configuration": {
+      "title": "ar5iv Preview",
+      "properties": {
+        "ar5iv.conversionMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "native",
+            "executable",
+            "backend"
+          ],
+          "default": "auto",
+          "description": "Conversion mode. Auto starts the managed local backend by default, with native and executable modes available for explicit testing."
+        },
+        "ar5iv.backendUrl": {
+          "type": "string",
+          "default": "https://latexml.rs",
+          "description": "Base URL for hosted conversion when the managed local server is disabled."
+        },
+        "ar5iv.managedServer.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start and stop a bundled local ar5iv-editor server for desktop backend conversion."
+        },
+        "ar5iv.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to an ar5iv-editor server binary. Empty means use the downloaded binary (or a development target path when running from source)."
+        },
+        "ar5iv.serverDownload": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically download the ar5iv-editor conversion backend on first use when no local binary is configured. Cached in the extension's global storage."
+        },
+        "ar5iv.serverDownloadBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Override the base URL the backend is downloaded from (for forks or local mirrors). Empty uses the official ar5iv-editor GitHub releases."
+        },
+        "ar5iv.nativeLatexmlOxidePath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to a native latexml-oxide module. Empty means bundled or extension-managed."
+        },
+        "ar5iv.disableNativeLatexmlOxide": {
+          "type": "boolean",
+          "default": false,
+          "description": "Disable the native converter and use the next allowed conversion mode."
+        },
+        "ar5iv.latexmlOxidePath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to a latexml-oxide executable fallback."
+        },
+        "ar5iv.debounceMs": {
+          "type": "number",
+          "default": 300,
+          "minimum": 50,
+          "maximum": 5000,
+          "description": "Delay after edits before refreshing the preview."
+        },
+        "ar5iv.demoSampleOnStartup": {
+          "type": "boolean",
+          "default": false,
+          "description": "On activation with no editor open, open a sample LaTeX document with the preview beside it. Enabled for the hosted /vscode web demo; off for normal use."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "npm run build:assets && npm run build:desktop && npm run build:web && npm run build:preview",
+    "build:assets": "mkdir -p media && cp ../frontend/public/css/ar5iv.css media/ar5iv.css && cp ../frontend/public/css/ar5iv-fonts.css media/ar5iv-fonts.css",
+    "build:server": "cargo build --release -p ar5iv-editor-server && mkdir -p bin && cp ../target/release/ar5iv-editor bin/ar5iv-editor",
+    "build:all": "npm run build:server && npm run build",
+    "package:vsix": "npm run build && vsce package --out ar5iv-vscode.vsix",
+    "build:desktop": "node esbuild.desktop.js",
+    "build:web": "node esbuild.web.js",
+    "build:preview": "node esbuild.preview.js",
+    "fetch:vscode-web": "node scripts/fetch-vscode-web.mjs",
+    "typecheck": "tsc --noEmit",
+    "watch": "node esbuild.desktop.js --watch"
+  },
+  "dependencies": {
+    "idiomorph": "^0.7.4",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.90.0",
+    "@types/ws": "^8.5.13",
+    "@vscode/test-web": "^0.0.66",
+    "@vscode/vsce": "^3.9.1",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.6.0"
+  }
+}

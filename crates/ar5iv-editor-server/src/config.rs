@@ -12,6 +12,15 @@ pub struct Config {
     /// `ServeDir` returns 404 for the sub-paths and the index page
     /// links are dead but reachable.
     pub schema_docs_dir: PathBuf,
+    /// Vendored VS Code Web "web-standalone" build, served at /vscode-static and
+    /// bootstrapped by the /vscode workbench route. Populated by
+    /// `vscode-extension/scripts/fetch-vscode-web.mjs`. When the directory is
+    /// absent, /vscode falls back to a launcher/status page.
+    pub vscode_web_dir: PathBuf,
+    /// The ar5iv VS Code extension root, served at /vscode-ext and loaded into
+    /// the web workbench as an `additionalBuiltinExtension` (its `browser` main
+    /// + bundled `media/`).
+    pub vscode_ext_dir: PathBuf,
     pub session: SessionConfig,
 }
 
@@ -80,8 +89,22 @@ impl Config {
         let schema_docs_dir = std::env::var("AR5IV_EDITOR_SCHEMA_DOCS_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("schema-docs"));
+        let vscode_web_dir = std::env::var("AR5IV_VSCODE_WEB_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("vscode-web"));
+        let vscode_ext_dir = std::env::var("AR5IV_VSCODE_EXT_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("vscode-extension"));
         let session = SessionConfig::load_from_env()?;
-        Ok(Self { bind, max_in_flight, static_dir, schema_docs_dir, session })
+        Ok(Self {
+            bind,
+            max_in_flight,
+            static_dir,
+            schema_docs_dir,
+            vscode_web_dir,
+            vscode_ext_dir,
+            session,
+        })
     }
 }
 

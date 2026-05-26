@@ -1,0 +1,11 @@
+src/**
+dist-types/**
+scripts/**
+**/*.map
+tsconfig.json
+esbuild.*.js
+node_modules/**
+# The conversion backend is NOT bundled: the extension downloads the pinned
+# ar5iv-editor server release on first activation (small VSIX, plug-and-play).
+bin/**
+media/preview.js.map

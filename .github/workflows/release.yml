@@ -1,0 +1,97 @@
+# Tag-triggered release for the self-contained `ar5iv-editor` server binary that
+# the VS Code extension downloads on first activation
+# (see docs/VSCODE_PREVIEW.md, "Plug-And-Play Distribution Roadmap").
+#
+# Pushing a bare-numeric tag (e.g. `0.2.0`) builds `tools/make-server-release.sh`
+# on ubuntu-22.04 and uploads the tarball + `.sha256` to a GitHub Release.
+# `workflow_dispatch` builds the artifacts without publishing (dry run), and
+# lets you pick the latexml-oxide ref.
+#
+# Why ubuntu-22.04: glibc 2.35 — binaries load on every later glibc (22.04 LTS,
+# 24.04 LTS, Debian 12/13). Mirrors latexml-oxide's release workflow.
+#
+# latexml is a *path* dependency (../../../latexml-oxide/...), so we check out
+# latexml-oxide as a sibling of this repo under the workspace root.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      latexml_ref:
+        description: 'latexml-oxide git ref to build against'
+        default: 'master'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish ${{ github.ref_name }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: checkout ar5iv-editor
+        uses: actions/checkout@v4
+        with:
+          path: ar5iv-editor
+          fetch-depth: 0
+
+      # Sibling checkout so the `../../../latexml-oxide/...` path dependency
+      # resolves under the shared workspace root.
+      - name: checkout latexml-oxide (path-dependency sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: dginev/latexml-oxide
+          ref: ${{ github.event.inputs.latexml_ref || 'master' }}
+          path: latexml-oxide
+          fetch-depth: 0
+          # latexml-oxide is a PRIVATE repo, so the default GITHUB_TOKEN (scoped
+          # to this repo only) cannot read it. Provide a token with read access
+          # via the `LATEXML_OXIDE_TOKEN` repo secret (a fine-grained PAT with
+          # Contents:read on dginev/latexml-oxide, or a classic PAT with `repo`).
+          # Falls back to the default token if latexml-oxide is ever made public.
+          token: ${{ secrets.LATEXML_OXIDE_TOKEN || github.token }}
+
+      - name: install build + runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxml2-dev libxslt1-dev libkpathsea-dev libkpathsea6 \
+            mold build-essential \
+            texlive texlive-latex-extra texlive-science \
+            texlive-bibtex-extra texlive-publishers poppler-utils
+
+      # rust-toolchain.toml pins nightly (latexml_core needs #![feature]).
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ar5iv-editor
+          key: server-release
+
+      - name: verify tag matches workspace version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          v="$(grep -m1 -E '^version = "' ar5iv-editor/Cargo.toml | sed -E 's/^version = "(.+)"$/\1/')"
+          if [ "$v" != "${GITHUB_REF_NAME}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match Cargo version $v; bump Cargo.toml before tagging." >&2
+            exit 1
+          fi
+
+      - name: build release artifacts
+        working-directory: ar5iv-editor
+        run: bash tools/make-server-release.sh
+
+      - name: publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          files: |
+            ar5iv-editor/target/server-release/*.tar.gz
+            ar5iv-editor/target/server-release/*.tar.gz.sha256

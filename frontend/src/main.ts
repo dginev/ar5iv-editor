@@ -1,7 +1,8 @@
 import "./styles.css";
 import { createEditor, type EditorTheme } from "./editor.ts";
 import { ConvertClient, type ConvertResponse, type Diagnostic } from "./ws.ts";
-import { renderResult, showLog, showEmptyState, setPreviewTheme, setPreviewChromeTheme, scrollPreviewToSource, bindPreviewSourceNav } from "./preview.ts";
+import { renderResult, showLog, showEmptyState, setPreviewTheme, setPreviewChromeTheme, scrollPreviewToSource, bindPreviewSourceNav, recoverSourcePosition } from "./preview.ts";
+import { splitPreamble, preloadFor, locateDiagnosticToken } from "../../frontend-core/index";
 import { EXAMPLES_LIST } from "./examples.ts";
 import {
   SessionClient,
@@ -13,7 +14,6 @@ import { bootResizers } from "./resizers.ts";
 import { FilePanel } from "./files.ts";
 import { showToast } from "./toast.ts";
 
-const PREAMBLE_RE = /^([\s\S]*\\begin\{document\})([\s\S]*)\\end\{document\}([\s\S]*)$/;
 const DEBOUNCE_MS = 300;
 
 type ChromeTheme = "paper" | "midnight" | "terminal";
@@ -126,119 +126,6 @@ function renderTimings(opts: {
     `<span class="timings-row">${group.map(renderStage).join("")}</span>`;
 
   el.innerHTML = renderRow(serverStages) + renderRow(clientStages);
-}
-
-function splitPreamble(tex: string): { preamble: string | null; body: string } {
-  const m = PREAMBLE_RE.exec(tex);
-  if (!m) return { preamble: null, body: tex };
-  return { preamble: "literal:" + m[1], body: m[2] };
-}
-
-// Best-effort reverse-sync recovery (preview → editor). A construct's source
-// locator names a line, but that line isn't always where the clicked text
-// actually lives: a multi-line font-switch wrapper reports only its start line,
-// a large paragraph reports its first line while the clicked word sits many
-// lines below, and macro-argument columns are unreliable (Bruce #101). Given a
-// whitespace-normalized phrase the user double-clicked (plus the exact `word`
-// within it), search the source for the phrase (whitespace-insensitive, so it
-// matches across the source's own line breaks — the rendered text is reflowed),
-// take the occurrence nearest the located line, then pinpoint `word` inside that
-// match so the caret lands on the clicked word. If the phrase can't be matched —
-// the common mixed-content case, where the context around the word contains
-// rendered math / citation glyphs (`[1]`, `x²`) that don't appear verbatim in
-// the source — fall back to the bare word nearest the located line. Returns the
-// recovered 1-based line + column, or `null` to keep the locator's own position
-// (nothing specific enough matched — never navigate somewhere worse).
-function recoverSourcePosition(
-  src: string,
-  targetLine: number,
-  phrase: string,
-  word: string,
-): { line: number; col: number } | null {
-  const fp = phrase.replace(/\s+/g, " ").trim();
-  const w = word.replace(/\s+/g, " ").trim();
-  // Whitespace-collapsed view of the source, with a back-map from each
-  // normalized char to its (line, col). Runs of whitespace (incl. newlines)
-  // become a single space, so a rendered phrase matches even where the source
-  // wrapped it across lines.
-  let norm = "";
-  const lineOf: number[] = [];
-  const colOf: number[] = [];
-  let line = 1;
-  let col = 1;
-  let inWs = false;
-  for (let i = 0; i < src.length; i++) {
-    const ch = src[i];
-    if (/\s/.test(ch)) {
-      if (!inWs) {
-        norm += " ";
-        lineOf.push(line);
-        colOf.push(col);
-        inWs = true;
-      }
-      if (ch === "\n") {
-        line++;
-        col = 1;
-      } else {
-        col++;
-      }
-      continue;
-    }
-    inWs = false;
-    norm += ch;
-    lineOf.push(line);
-    colOf.push(col);
-    col++;
-  }
-  // The occurrence of `needle` whose start line is nearest the located line
-  // (so the closest plausible match wins over a farther duplicate).
-  const nearest = (needle: string): number => {
-    let bestIdx = -1;
-    let bestDist = Infinity;
-    for (let idx = norm.indexOf(needle); idx !== -1; idx = norm.indexOf(needle, idx + 1)) {
-      const dist = Math.abs(lineOf[idx] - targetLine);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestIdx = idx;
-      }
-    }
-    return bestIdx;
-  };
-  // 1. The context phrase is specific enough to disambiguate; pinpoint `word`
-  //    inside the matched region so the caret lands on the clicked word.
-  if (fp.length >= 4) {
-    const phraseIdx = nearest(fp);
-    if (phraseIdx >= 0) {
-      let pos = phraseIdx;
-      if (w) {
-        const wIdx = norm.indexOf(w, phraseIdx);
-        if (wIdx !== -1 && wIdx <= phraseIdx + fp.length) pos = wIdx;
-      }
-      return { line: lineOf[pos], col: colOf[pos] };
-    }
-  }
-  // 2. Phrase didn't match (mixed content). The bare word usually does appear
-  //    in the source; take the nearest occurrence. Require some length so a
-  //    stray short token doesn't match all over.
-  if (w.length >= 4) {
-    const wordIdx = nearest(w);
-    if (wordIdx >= 0) return { line: lineOf[wordIdx], col: colOf[wordIdx] };
-  }
-  return null;
-}
-
-// Mirrors the server's `contains_documentclass` (convert.rs): true iff the
-// source contains `\documentclass` outside a comment. Used to decide
-// preload shape — a full document loads its own packages, so we only
-// need ar5iv.sty in front; a fragment needs the article-class chain too.
-function hasDocumentclass(tex: string): boolean {
-  for (const line of tex.split("\n")) {
-    const trimmed = line.replace(/^\s+/, "");
-    if (trimmed.startsWith("%")) continue;
-    const idx = trimmed.indexOf("\\documentclass");
-    if (idx >= 0 && !trimmed.slice(0, idx).includes("%")) return true;
-  }
-  return false;
 }
 
 function bootExamples(switchExample: (slug: string) => void): void {
@@ -460,33 +347,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  // The convert preload list — kept here so the file-panel binary
-  // stub and the WS frame agree on what's loaded.
-  // ar5iv.sty must come FIRST: it calls `pass_options("latexml", "sty", …,
-  // tokenlimit=249999999)` before requiring latexml.sty. Once anything else
-  // in the preload list triggers a latexml.sty load (article.cls and the
-  // amsmath family do), the higher token limit can no longer be passed in.
-  //
-  // For fragment input (no \documentclass), we also preload the article
-  // class + the common math/color/link packages so the snippet renders
-  // without the user having to declare them. For full documents
-  // (\documentclass present) the source loads what it needs itself —
-  // we only need to ensure ar5iv.sty is in place first.
-  const PRELOAD_AR5IV_ONLY = ["ar5iv.sty"];
-  const PRELOAD_FRAGMENT = [
-    "ar5iv.sty",
-    "LaTeX.pool",
-    "article.cls",
-    "amsmath.sty",
-    "amsthm.sty",
-    "amstext.sty",
-    "amssymb.sty",
-    "eucal.sty",
-    "[dvipsnames]xcolor.sty",
-    "url.sty",
-    "hyperref.sty",
-  ];
-
   // Active file in the session, plus the session's last-known
   // `version`. When `activePath` points at a binary, the editor is
   // hidden and the metadata stub is shown instead — convert frames
@@ -612,6 +472,25 @@ async function main(): Promise<void> {
           toLine: d.to_line,
           toCol: d.to_col,
         });
+      } else if (matchesActiveBuffer(d.source)) {
+        // No engine source line, but the diagnostic belongs to the active
+        // buffer (e.g. an undefined macro inside a macro argument, which the
+        // engine can't locate — Bruce #101). Recover the position by finding
+        // the named token in the source; else fall back to the unanchored
+        // badge. Shared with the VS Code extension via frontend-core.
+        const located = locateDiagnosticToken(editor.getSource(), d.category, d.message);
+        if (located) {
+          anchored.push({
+            severity: cmSeverity(d.severity),
+            message: `${d.category}: ${d.message.split("\n")[0]}`,
+            fromLine: located.line,
+            fromCol: located.column,
+            toLine: located.line,
+            toCol: located.column + located.length,
+          });
+        } else {
+          unanchored.push(d);
+        }
       } else {
         unanchored.push(d);
       }
@@ -886,7 +765,7 @@ async function main(): Promise<void> {
       preamble: preamble ?? undefined,
       profile: "fragment",
       format: "html5",
-      preload: hasDocumentclass(tex) ? PRELOAD_AR5IV_ONLY : PRELOAD_FRAGMENT,
+      preload: [...preloadFor(tex)],
     });
     statusEl().textContent = "converting…";
     startConvertTicker();
