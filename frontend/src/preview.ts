@@ -609,6 +609,69 @@ export interface SourceNavTarget {
   tag: number;
   line: number;
   col: number;
+  /** The exact word the user double-clicked, from the rendered text. The caller
+   *  pinpoints the caret on *this* word within the matched `text` region, so a
+   *  double-click lands on the word — not a few words before it. Empty when the
+   *  click isn't on a word. */
+  word: string;
+  /** A whitespace-normalized *phrase* of rendered text around the double-click
+   *  (`word` plus a little context). The caller uses it as a content
+   *  fingerprint: search the source for it (whitespace-insensitive, so it
+   *  matches across the source's own line breaks) and take the occurrence
+   *  nearest the located line, then pinpoint `word` inside that match. This
+   *  recovers constructs whose source locator is imperfect — a multi-line
+   *  font-switch wrapper that reports only its start line, or a large paragraph
+   *  whose words sit far below its start-line locator. Empty when not on text. */
+  text: string;
+}
+
+/** The selection's start offset within `leaf` and the selected word. A
+ *  double-click selects the word under the pointer; unlike `caretRangeFromPoint`
+ *  the selection's range lives *inside* the preview shadow tree, so this is the
+ *  reliable way to read the click within shadowed content. `null` when there's
+ *  no usable selection in `leaf`. */
+function selectionInfo(leaf: HTMLElement): { offset: number; word: string } | null {
+  const root = leaf.getRootNode() as ShadowRoot | Document;
+  // `ShadowRoot.getSelection()` is the shadow-aware accessor (Blink/WebKit);
+  // fall back to the document selection (Firefox keeps shadow selections there).
+  const getSel = (root as unknown as { getSelection?: () => Selection | null })
+    .getSelection;
+  const sel = (getSel ? getSel.call(root) : null) ?? window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  if (!leaf.contains(range.startContainer)) return null;
+  const pre = document.createRange();
+  pre.selectNodeContents(leaf);
+  try {
+    pre.setEnd(range.startContainer, range.startOffset);
+  } catch {
+    return null;
+  }
+  return { offset: pre.toString().length, word: sel.toString().replace(/\s+/g, " ").trim() };
+}
+
+/** The maximal non-whitespace run straddling `off` (fallback word when there's
+ *  no selection, e.g. a non-double-click activation). */
+function wordAt(text: string, off: number): string {
+  if (off < 0 || off > text.length) return "";
+  let s = off;
+  let e = off;
+  while (s > 0 && !/\s/.test(text[s - 1])) s--;
+  while (e < text.length && !/\s/.test(text[e])) e++;
+  return text.slice(s, e).trim();
+}
+
+/** A whitespace-normalized phrase of `text` straddling char offset `off`: a
+ *  ~`span`-char window each side, grown out to whitespace boundaries so words
+ *  aren't cut, then collapsed. Specific enough to match unambiguously against
+ *  the source even over a wide search window. */
+function phraseAround(text: string, off: number, span = 28): string {
+  if (off < 0 || off > text.length) return "";
+  let s = Math.max(0, off - span);
+  let e = Math.min(text.length, off + span);
+  while (s > 0 && !/\s/.test(text[s - 1])) s--;
+  while (e < text.length && !/\s/.test(text[e])) e++;
+  return text.slice(s, e).replace(/\s+/g, " ").trim();
 }
 
 let sourceNavBound = false;
@@ -672,15 +735,21 @@ export function bindPreviewSourceNav(onPick: (t: SourceNavTarget) => void): void
     if (!leaf) return;
     const sp = parseSourcepos(leaf.getAttribute("data-sourcepos") ?? "");
     if (!sp) return;
+    const me = ev as MouseEvent;
+    const leafText = leaf.textContent ?? "";
+    // Prefer the double-click selection (its range lives inside the shadow tree,
+    // and it gives the exact selected word); fall back to caret-from-point.
+    const sel = selectionInfo(leaf);
+    const off = sel?.offset ?? clickCharOffset(leaf, me.clientX, me.clientY);
+    const word = sel?.word || (off != null ? wordAt(leafText, off) : "");
+    // Context phrase (word + neighbours) for a specific source match; `word`
+    // then pinpoints the caret within that match.
+    const text = off != null ? phraseAround(leafText, off) : "";
     let col = sp.fromCol;
-    if (sp.fromLine === sp.toLine && sp.toCol >= sp.fromCol) {
-      const me = ev as MouseEvent;
-      const off = clickCharOffset(leaf, me.clientX, me.clientY);
-      if (off != null) {
-        col = sp.fromCol + Math.min(off, sp.toCol - sp.fromCol);
-      }
+    if (sp.fromLine === sp.toLine && sp.toCol >= sp.fromCol && off != null) {
+      col = sp.fromCol + Math.min(off, sp.toCol - sp.fromCol);
     }
-    onPick({ tag: sp.fromTag, line: sp.fromLine, col });
+    onPick({ tag: sp.fromTag, line: sp.fromLine, col, word, text });
   });
   sourceNavBound = true;
 }
