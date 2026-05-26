@@ -135,16 +135,19 @@ export class PreviewPanel {
 <body>
   <header>
     <div class="title" id="title">ar5iv Preview</div>
-    <div class="toolbar">
-      <button class="tool-btn" id="btn-refresh" type="button" title="Refresh preview">↻</button>
-      <button class="tool-btn" id="btn-log" type="button" title="Toggle conversion log" aria-pressed="false">log</button>
+    <div class="header-right">
+      <a class="version" id="version" target="_blank" rel="noopener noreferrer" hidden></a>
+      <div class="toolbar">
+        <button class="tool-btn" id="btn-refresh" type="button" title="Refresh preview">↻</button>
+        <button class="tool-btn" id="btn-log" type="button" title="Toggle conversion log" aria-pressed="false">log</button>
+      </div>
     </div>
   </header>
   <div class="statusbar">
+    <span class="caption">Conversion stats</span>
     <span class="status" id="status" title="Click to toggle the conversion log">ready</span>
-    <span class="timings" id="timings"></span>
-    <a class="version" id="version" target="_blank" rel="noopener noreferrer" hidden></a>
   </div>
+  <div class="timings" id="timings"></div>
   <main>
     <div id="preview"></div>
     <pre class="log" id="log" hidden></pre>

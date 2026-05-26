@@ -170,15 +170,35 @@ function tierFor(totalMs: number): "ok" | "warn" | "bad" {
   return "bad";
 }
 
-function renderTimings(t: Timings | undefined, wallMs: number, renderMs: number): void {
-  const stage = (label: string, value: string, extra = "") =>
-    `<span class="stage${extra ? " " + extra : ""}"><span class="lbl">${label}</span><span class="val">${value}</span></span>`;
-  const parts: string[] = [];
-  if (t?.buildUs !== undefined) parts.push(stage("startup", `${(t.buildUs / 1000).toFixed(2)} ms`));
-  if (t?.convertMs !== undefined) parts.push(stage("TeX→XML", `${fmtMs(t.convertMs)} ms`));
-  if (t?.postMs !== undefined) parts.push(stage("XML→HTML5", `${fmtMs(t.postMs)} ms`));
-  parts.push(stage("render", `${fmtMs(renderMs)} ms`));
-  parts.push(stage("total", `${fmtMs(wallMs)} ms`, `tier-${tierFor(wallMs)}`));
+interface Stage {
+  key: string;
+  label: string;
+  value: string;
+  ms: number;
+}
+
+function stageSpan(key: string, label: string, value: string, extra = ""): string {
+  return `<span class="stage stage--${key}${extra ? " " + extra : ""}"><span class="label">${label}</span><span class="value">${value}</span></span>`;
+}
+
+/** Per-stage timing breakdown, mirroring /editor: server stages (startup,
+ *  TeX→XML, XML→HTML5), then client stages (network wire, render), then the
+ *  wall-clock total. The slowest contributor is emphasized; the total is
+ *  tier-colored. `wireMs` is wire/queue latency (round-trip minus server
+ *  total); `wallMs` is the full client-perceived time. */
+function renderTimings(t: Timings | undefined, wireMs: number, renderMs: number, wallMs: number): void {
+  const stages: Stage[] = [];
+  if (t?.buildUs !== undefined) stages.push({ key: "startup", label: "startup", value: `${(t.buildUs / 1000).toFixed(2)} ms`, ms: t.buildUs / 1000 });
+  if (t?.convertMs !== undefined) stages.push({ key: "convert", label: "TeX → XML", value: `${fmtMs(t.convertMs)} ms`, ms: t.convertMs });
+  if (t?.postMs !== undefined) stages.push({ key: "post", label: "XML → HTML5", value: `${fmtMs(t.postMs)} ms`, ms: t.postMs });
+  stages.push({ key: "network", label: "network", value: `${fmtMs(wireMs)} ms`, ms: wireMs });
+  stages.push({ key: "render", label: "render", value: `${fmtMs(renderMs)} ms`, ms: renderMs });
+
+  let slowest: Stage | undefined;
+  for (const stage of stages) if (!slowest || stage.ms > slowest.ms) slowest = stage;
+
+  const parts = stages.map((stage) => stageSpan(stage.key, stage.label, stage.value, stage === slowest ? "slowest" : ""));
+  parts.push(stageSpan("total", "total", `${fmtMs(wallMs)} ms`, `tier-${tierFor(wallMs)}`));
   timingsEl.innerHTML = parts.join("");
 }
 
@@ -189,9 +209,9 @@ function renderVersion(converter: ConverterVersion | undefined): void {
   }
   versionEl.hidden = false;
   versionEl.href = converter.url || "#";
-  const label = [converter.name || "latexml-oxide", converter.date, converter.sha]
-    .filter(Boolean)
-    .join(" · ");
+  const name = converter.name || "latexml-oxide";
+  const meta = [converter.date, converter.sha].filter(Boolean).join(" · ");
+  const label = meta ? `${name} ${meta}` : name;
   versionEl.textContent = label;
   versionEl.title = `Conversion backend: ${label}`;
 }
@@ -297,7 +317,13 @@ function handleResult(request: RequestMeta, response: ConvertResponse): void {
     preview.showEmptyState(response.log || statusSummary(response));
   }
   const renderMs = performance.now() - t0;
-  renderTimings(response.timings, (response.timings?.networkMs ?? 0) + renderMs, renderMs);
+  // The provider's networkMs is the full client round-trip (PUT + WS); wire
+  // latency is that minus the server total, and the wall total adds render.
+  const roundTrip = response.timings?.networkMs ?? 0;
+  const serverTotal = response.timings?.totalMs ?? 0;
+  const wireMs = Math.max(0, roundTrip - serverTotal);
+  const wallMs = roundTrip + renderMs;
+  renderTimings(response.timings, wireMs, renderMs, wallMs);
 
   if (request.cursor) {
     preview.scrollToSource(
