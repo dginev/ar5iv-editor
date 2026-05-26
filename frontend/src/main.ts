@@ -2,7 +2,7 @@ import "./styles.css";
 import { createEditor, type EditorTheme } from "./editor.ts";
 import { ConvertClient, type ConvertResponse, type Diagnostic } from "./ws.ts";
 import { renderResult, showLog, showEmptyState, setPreviewTheme, setPreviewChromeTheme, scrollPreviewToSource, bindPreviewSourceNav, recoverSourcePosition } from "./preview.ts";
-import { splitPreamble, preloadFor } from "../../frontend-core/index";
+import { splitPreamble, preloadFor, locateDiagnosticToken } from "../../frontend-core/index";
 import { EXAMPLES_LIST } from "./examples.ts";
 import {
   SessionClient,
@@ -472,6 +472,25 @@ async function main(): Promise<void> {
           toLine: d.to_line,
           toCol: d.to_col,
         });
+      } else if (matchesActiveBuffer(d.source)) {
+        // No engine source line, but the diagnostic belongs to the active
+        // buffer (e.g. an undefined macro inside a macro argument, which the
+        // engine can't locate — Bruce #101). Recover the position by finding
+        // the named token in the source; else fall back to the unanchored
+        // badge. Shared with the VS Code extension via frontend-core.
+        const located = locateDiagnosticToken(editor.getSource(), d.category, d.message);
+        if (located) {
+          anchored.push({
+            severity: cmSeverity(d.severity),
+            message: `${d.category}: ${d.message.split("\n")[0]}`,
+            fromLine: located.line,
+            fromCol: located.column,
+            toLine: located.line,
+            toCol: located.column + located.length,
+          });
+        } else {
+          unanchored.push(d);
+        }
       } else {
         unanchored.push(d);
       }

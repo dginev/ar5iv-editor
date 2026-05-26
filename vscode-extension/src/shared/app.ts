@@ -68,7 +68,6 @@ class Ar5ivExtensionApp {
     this.disposables.push(
       vscode.commands.registerCommand("ar5iv.openPreview", () => this.openPreview()),
       vscode.workspace.onDidChangeTextDocument((event) => this.onDidChangeTextDocument(event)),
-      vscode.window.onDidChangeTextEditorSelection((event) => this.onDidChangeSelection(event)),
       vscode.workspace.onDidCloseTextDocument((document) => this.onDidCloseDocument(document)),
     );
     this.context.subscriptions.push(this);
@@ -128,15 +127,6 @@ class Ar5ivExtensionApp {
       );
       void this.convertNow(editor?.selection.active);
     });
-  }
-
-  private onDidChangeSelection(event: vscode.TextEditorSelectionChangeEvent): void {
-    if (!this.activeDocument || event.textEditor.document.uri.toString() !== this.activeDocument.uri.toString()) {
-      return;
-    }
-    if (event.kind === vscode.TextEditorSelectionChangeKind.Command) {
-      this.debouncer.schedule(() => void this.convertNow(event.selections[0]?.active));
-    }
   }
 
   private onDidCloseDocument(document: vscode.TextDocument): void {
