@@ -820,16 +820,43 @@ needs:
 
 So a single downloaded binary is *not* self-sufficient on a bare system.
 
-### Current state (demo)
+### Current state (shipped, Linux) — 2026-05-26
 
-- Linux only, `assume system libs + TeX Live present` (target audience: LaTeX
-  authors). The plugin downloads a prebuilt `ar5iv-editor` server release into
-  extension global storage on first activation, verifies it, caches it, and
-  auto-starts it (managed server). Default-on; `ar5iv.serverPath` overrides.
-- The download is structured **per-platform** from day one: it resolves
-  `ar5iv-editor-<version>-<target-triple>.tar.gz`, ships `x86_64-unknown-linux-gnu`
-  today, and reports a clean "not yet available for your platform" otherwise.
-  Adding an OS later is purely a new release asset — no plugin change.
+Plug-and-play is **live and verified** on Linux x86_64: *Install Extension →
+ar5iv-editor → Reload Window → preview*, with no settings.
+
+- Linux x86_64 only, `assume system libs + TeX Live present` (target audience:
+  LaTeX authors). On first activation the plugin downloads the prebuilt,
+  self-contained `ar5iv-editor` server release into extension global storage,
+  sha256-verifies it (against the published `.sha256`), caches it, and
+  auto-starts it (managed server). Default-on; `ar5iv.serverPath` /
+  `ar5iv.serverDownloadBaseUrl` override.
+- The VSIX is ~82 KB (no bundled binary). The download is structured
+  **per-platform** from day one: it resolves
+  `ar5iv-editor-<SERVER_VERSION>-<target-triple>.tar.gz`, ships
+  `x86_64-unknown-linux-gnu` today, and reports a clean "not yet available for
+  your platform" otherwise. Adding an OS later is purely a new release asset —
+  no plugin change.
+- First published backend release: **`0.2.0`** (the portable glibc-2.35 CI
+  build). Verified end-to-end: download from the default URL → checksum match →
+  extract → the published binary runs and serves `/api/version`.
+
+### Releasing the backend
+
+Cutting a server release requires **three version points to agree**:
+`SERVER_VERSION` in `vscode-extension/src/desktop/managedServer.ts`, the
+workspace `Cargo.toml` `version`, and the pushed git tag (`X.Y.Z`, bare
+numeric). Then:
+
+1. `tools/make-server-release.sh` — local dry build (tarball + `.sha256`).
+2. Push the `X.Y.Z` tag → `.github/workflows/release.yml` builds on ubuntu-22.04
+   (glibc 2.35) and publishes the assets.
+3. **CI requires the `LATEXML_OXIDE_TOKEN` repo secret** — a fine-grained PAT
+   with `Contents:read` on `dginev/latexml-oxide`. latexml-oxide is a *private*
+   path dependency, so the default `GITHUB_TOKEN` cannot check it out (the run
+   otherwise fails at "checkout latexml-oxide: repository not found").
+   `workflow_dispatch` runs a dry build (no publish) and lets you pick the
+   latexml-oxide ref.
 
 ### Path to full plug-and-play (no system prerequisites)
 
