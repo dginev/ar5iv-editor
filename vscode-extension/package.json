@@ -63,7 +63,17 @@
         "ar5iv.serverPath": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to an ar5iv-editor server binary. Empty means bundled binary or development target path."
+          "description": "Absolute path to an ar5iv-editor server binary. Empty means use the downloaded binary (or a development target path when running from source)."
+        },
+        "ar5iv.serverDownload": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically download the ar5iv-editor conversion backend on first use when no local binary is configured. Cached in the extension's global storage."
+        },
+        "ar5iv.serverDownloadBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Override the base URL the backend is downloaded from (for forks or local mirrors). Empty uses the official ar5iv-editor GitHub releases."
         },
         "ar5iv.nativeLatexmlOxidePath": {
           "type": "string",
@@ -79,11 +89,6 @@
           "type": "string",
           "default": "",
           "description": "Absolute path to a latexml-oxide executable fallback."
-        },
-        "ar5iv.allowDownloadLatexmlOxide": {
-          "type": "boolean",
-          "default": false,
-          "description": "Allow explicit download of supported Ubuntu latexml-oxide assets after integrity metadata is available."
         },
         "ar5iv.debounceMs": {
           "type": "number",
@@ -105,7 +110,7 @@
     "build:assets": "mkdir -p media && cp ../frontend/public/css/ar5iv.css media/ar5iv.css && cp ../frontend/public/css/ar5iv-fonts.css media/ar5iv-fonts.css",
     "build:server": "cargo build --release -p ar5iv-editor-server && mkdir -p bin && cp ../target/release/ar5iv-editor bin/ar5iv-editor",
     "build:all": "npm run build:server && npm run build",
-    "package:vsix": "npm run build:all && vsce package --out ar5iv-vscode.vsix",
+    "package:vsix": "npm run build && vsce package --out ar5iv-vscode.vsix",
     "build:desktop": "node esbuild.desktop.js",
     "build:web": "node esbuild.web.js",
     "build:preview": "node esbuild.preview.js",

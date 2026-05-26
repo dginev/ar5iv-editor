@@ -796,3 +796,69 @@ Carried-over gaps (unchanged): native N-API provider does not exist; hosted
 mode uploads only the active file (no `\input`/graphics/`.bib`/`.bbl` sync) and
 has no session-expiry recovery; multi-file reverse-nav resolves by workspace
 basename search only; cross-platform VSIX packaging needs per-target artifacts.
+
+## Plug-And-Play Distribution Roadmap
+
+**Goal:** a single extension installation on any OS that, with default settings,
+lets a user instantly preview any `.tex` — no manual toolchain, no LaTeX
+install, no terminal. Install → enable → preview.
+
+### Conversion backend dependency analysis (2026-05-26)
+
+The managed-server path runs the self-contained `ar5iv-editor` HTTP server
+(~53 MB release; latexml-oxide compiled in as a Rust library). Its real runtime
+needs:
+
+- **Shared C libraries** (dynamically linked): `libxml2`, `libxslt`/`libexslt`,
+  `libkpathsea`. The `-dev` headers are build-time only; runtime needs just the
+  `.so`/`.dylib`/`.dll`. Present on most Linux/LaTeX machines; absent on bare
+  macOS/Windows.
+- **A texmf tree** for any package latexml-oxide has no hand-written Rust
+  binding for: `find_file` falls back to `kpathsea` → system TeX Live. Common
+  packages (article, amsmath, ar5iv, …) are bound and need no texmf; long-tail
+  packages do.
+
+So a single downloaded binary is *not* self-sufficient on a bare system.
+
+### Current state (demo)
+
+- Linux only, `assume system libs + TeX Live present` (target audience: LaTeX
+  authors). The plugin downloads a prebuilt `ar5iv-editor` server release into
+  extension global storage on first activation, verifies it, caches it, and
+  auto-starts it (managed server). Default-on; `ar5iv.serverPath` overrides.
+- The download is structured **per-platform** from day one: it resolves
+  `ar5iv-editor-<version>-<target-triple>.tar.gz`, ships `x86_64-unknown-linux-gnu`
+  today, and reports a clean "not yet available for your platform" otherwise.
+  Adding an OS later is purely a new release asset — no plugin change.
+
+### Path to full plug-and-play (no system prerequisites)
+
+This is mostly **latexml-oxide / `ar5iv-editor` build work** (the engine), not
+plugin work; the plugin's download/cache/auto-start is already in place.
+
+1. **Statically link the third-party C deps, per OS.**
+   - Linux: `x86_64-unknown-linux-musl` → a *fully* static binary (musl libc +
+     libxml2/libxslt/kpathsea built from source). One file, any Linux.
+   - macOS: `libSystem` cannot be statically linked (Apple), but it is always
+     present; statically link the three third-party libs → self-contained in
+     practice. Ship `aarch64-apple-darwin` + `x86_64-apple-darwin`.
+   - Windows: link the C deps against the static CRT → self-contained `.exe`.
+2. **Bundle a curated texmf subset** with the release and point kpathsea at it
+   (`TEXMFHOME`/`texmf.cnf` in global storage), so common unbound packages
+   resolve with no system TeX Live. Long-tail packages still degrade to a
+   system texmf if one exists. Sizing the subset (ar5iv + the most-used arXiv
+   packages) is the main judgement call.
+3. **Per-OS release matrix.** Tag-triggered CI builds the static binary + texmf
+   bundle for each target triple and publishes them as release assets with
+   `.sha256` sidecars. The plugin already selects by triple.
+4. **Acquisition trust.** Verify `.sha256` (and ideally a signature) before
+   chmod/execute; pin the release version in the extension; keep an opt-out
+   (`ar5iv.serverDownload=false` + `ar5iv.serverPath`).
+
+### Alternative considered: native N-API module
+
+A native `latexml-oxide` N-API addon (loaded in-process by the extension)
+removes the localhost server hop and the spawn, but multiplies the
+static-linking/texmf-bundling problem across Node ABIs and OSes, and still needs
+the texmf tree. The managed self-contained server is the simpler portable unit;
+keep the native module as a later optimization, not the portability strategy.

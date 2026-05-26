@@ -1,15 +1,24 @@
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as net from "net";
 import * as os from "os";
 import * as path from "path";
-import { spawn, type ChildProcessByStdio } from "child_process";
+import { execFile, spawn, type ChildProcessByStdio } from "child_process";
+import { promisify } from "util";
 import type { Readable } from "stream";
 import * as vscode from "vscode";
+
+const execFileAsync = promisify(execFile);
 
 type ManagedServerProcess = ChildProcessByStdio<null, Readable, Readable>;
 
 const READY_TIMEOUT_MS = 30_000;
 const READY_POLL_MS = 250;
+
+// Pinned ar5iv-editor server release the plugin downloads when no local binary
+// is available. Bump together with the published GitHub release tag.
+const SERVER_VERSION = "0.2.0";
+const RELEASE_BASE_URL = "https://github.com/dginev/ar5iv-editor/releases/download";
 
 export class ManagedAr5ivServer {
   private child: ManagedServerProcess | undefined;
@@ -25,7 +34,7 @@ export class ManagedAr5ivServer {
     if (this.backendUrl) return this.backendUrl;
     this.stopping = false;
 
-    const executable = resolveServerExecutable(this.context);
+    const executable = await resolveServerExecutable(this.context, this.output);
     const port = await reservePort();
     const url = `http://127.0.0.1:${port}`;
     const sessionsDir = path.join(this.context.globalStorageUri.fsPath, "sessions");
@@ -108,32 +117,146 @@ export class ManagedAr5ivServer {
   }
 }
 
-function resolveServerExecutable(context: vscode.ExtensionContext): string {
-  const configured = vscode.workspace.getConfiguration("ar5iv").get<string>("serverPath", "").trim();
-  const extensionRoot = context.extensionPath;
-  const repoRoot = path.resolve(extensionRoot, "..");
-  const candidates = [
-    configured || undefined,
-    path.join(extensionRoot, "bin", executableName("ar5iv-editor")),
-    path.join(repoRoot, "target", "release", executableName("ar5iv-editor")),
-    path.join(repoRoot, "target", "debug", executableName("ar5iv-editor")),
-  ].filter((candidate): candidate is string => Boolean(candidate));
+/** Resolve the ar5iv-editor server binary, downloading it on first use so a
+ *  fresh marketplace install is plug-and-play. Resolution order:
+ *  1. `ar5iv.serverPath` (explicit override);
+ *  2. a previously downloaded binary cached in extension global storage;
+ *  3. local dev binaries (only present when running from the repo via
+ *     extensionDevelopmentPath; never in an installed VSIX);
+ *  4. download the pinned release for this platform into global storage. */
+async function resolveServerExecutable(
+  context: vscode.ExtensionContext,
+  output: vscode.OutputChannel,
+): Promise<string> {
+  const config = vscode.workspace.getConfiguration("ar5iv");
 
-  for (const candidate of candidates) {
-    if (isExecutable(candidate)) return candidate;
+  const configured = config.get<string>("serverPath", "").trim();
+  if (configured) {
+    if (isExecutable(configured)) return configured;
+    throw new Error(`ar5iv.serverPath is set to ${configured}, but it is not an executable file.`);
   }
 
-  throw new Error(
-    [
-      "No ar5iv-editor server binary found.",
-      "Set ar5iv.serverPath or package a binary at vscode-extension/bin/ar5iv-editor.",
-      `Tried: ${candidates.join(", ")}`,
-    ].join(" "),
-  );
+  const cached = downloadedBinaryPath(context);
+  if (isExecutable(cached)) return cached;
+
+  const repoRoot = path.resolve(context.extensionPath, "..");
+  for (const dev of [
+    path.join(context.extensionPath, "bin", executableName("ar5iv-editor")),
+    path.join(repoRoot, "target", "release", executableName("ar5iv-editor")),
+    path.join(repoRoot, "target", "debug", executableName("ar5iv-editor")),
+  ]) {
+    if (isExecutable(dev)) return dev;
+  }
+
+  if (!config.get<boolean>("serverDownload", true)) {
+    throw new Error(
+      "No ar5iv-editor server binary found and automatic download is disabled (ar5iv.serverDownload). Set ar5iv.serverPath to a binary.",
+    );
+  }
+  return downloadServer(context, output);
 }
 
 function executableName(base: string): string {
   return os.platform() === "win32" ? `${base}.exe` : base;
+}
+
+/** Cached download location, versioned so a server bump fetches afresh. */
+function downloadedBinaryPath(context: vscode.ExtensionContext): string {
+  return path.join(
+    context.globalStorageUri.fsPath,
+    "server",
+    SERVER_VERSION,
+    executableName("ar5iv-editor"),
+  );
+}
+
+/** The Rust target triple for this platform, or null when no prebuilt release
+ *  is published for it yet (the MVP ships linux x86_64 only). */
+function targetTriple(): string | null {
+  if (os.platform() === "linux" && os.arch() === "x64") return "x86_64-unknown-linux-gnu";
+  return null;
+}
+
+/** Download + verify + extract the pinned server release into global storage,
+ *  showing progress. Returns the cached executable path. */
+async function downloadServer(
+  context: vscode.ExtensionContext,
+  output: vscode.OutputChannel,
+): Promise<string> {
+  const triple = targetTriple();
+  if (!triple) {
+    throw new Error(
+      `No prebuilt ar5iv-editor server is available for ${os.platform()}-${os.arch()} yet. ` +
+        "Set ar5iv.serverPath to a locally built binary, or build one from https://github.com/dginev/ar5iv-editor.",
+    );
+  }
+
+  const asset = `ar5iv-editor-${SERVER_VERSION}-${triple}.tar.gz`;
+  const base = vscode.workspace.getConfiguration("ar5iv").get<string>("serverDownloadBaseUrl", "").trim() || RELEASE_BASE_URL;
+  const url = `${base.replace(/\/$/, "")}/${SERVER_VERSION}/${asset}`;
+  const destDir = path.dirname(downloadedBinaryPath(context));
+  const destBinary = downloadedBinaryPath(context);
+
+  return vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: "ar5iv: downloading conversion backend…", cancellable: false },
+    async () => {
+      output.appendLine(`Downloading ar5iv-editor ${SERVER_VERSION} from ${url}`);
+      const archive = await fetchBytes(url);
+      const expected = await fetchText(`${url}.sha256`).then(parseSha256).catch(() => undefined);
+      const actual = crypto.createHash("sha256").update(archive).digest("hex");
+      if (expected && expected !== actual) {
+        throw new Error(`ar5iv-editor download checksum mismatch (expected ${expected}, got ${actual}).`);
+      }
+
+      const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "ar5iv-server-"));
+      try {
+        const tarball = path.join(tmpDir, asset);
+        await fs.promises.writeFile(tarball, archive);
+        await execFileAsync("tar", ["-xzf", tarball, "-C", tmpDir]);
+        const extracted = await findExecutable(tmpDir, executableName("ar5iv-editor"));
+        if (!extracted) throw new Error("ar5iv-editor binary not found in the downloaded archive.");
+        await fs.promises.mkdir(destDir, { recursive: true });
+        await fs.promises.copyFile(extracted, destBinary);
+        await fs.promises.chmod(destBinary, 0o755);
+      } finally {
+        await fs.promises.rm(tmpDir, { recursive: true, force: true });
+      }
+      output.appendLine(`ar5iv-editor ${SERVER_VERSION} installed at ${destBinary}`);
+      return destBinary;
+    },
+  );
+}
+
+async function fetchBytes(url: string): Promise<Buffer> {
+  const response = await fetch(url, { redirect: "follow" });
+  if (!response.ok) throw new Error(`download failed: ${response.status} ${response.statusText} (${url})`);
+  return Buffer.from(await response.arrayBuffer());
+}
+
+async function fetchText(url: string): Promise<string> {
+  const response = await fetch(url, { redirect: "follow" });
+  if (!response.ok) throw new Error(`download failed: ${response.status} ${url}`);
+  return response.text();
+}
+
+/** Parse a `<hex>  <filename>` checksum sidecar (ripgrep/sha256sum format). */
+function parseSha256(text: string): string | undefined {
+  return /\b([a-f0-9]{64})\b/i.exec(text)?.[1]?.toLowerCase();
+}
+
+/** Find an executable named `name` anywhere under `dir` (the archive may stage
+ *  the binary inside a versioned subdirectory). */
+async function findExecutable(dir: string, name: string): Promise<string | undefined> {
+  for (const entry of await fs.promises.readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const nested = await findExecutable(full, name);
+      if (nested) return nested;
+    } else if (entry.name === name) {
+      return full;
+    }
+  }
+  return undefined;
 }
 
 function isExecutable(candidate: string): boolean {
