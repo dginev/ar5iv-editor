@@ -1,7 +1,7 @@
 # docker-compose for the demo deploy: Anubis fronts the Axum binary,
-# Caddy is left to the host (see deploy/cloud-demo.md). Tuned for
-# Vultr High-Frequency 2 GB (1 vCPU, 2 GB RAM); see the comments
-# next to each value if you're on a bigger box.
+# Caddy is left to the host (see deploy/cloud-demo.md). Tuned for a
+# 1 vCPU / ~2 GB VM (currently an Azure VM, kpathsea 6.3.5 / TL2023);
+# see the comments next to each value if you're on a bigger box.
 
 services:
   anubis:
@@ -39,13 +39,21 @@ services:
       AR5IV_EDITOR_QUOTA_ROOT_BYTES: "536870912"   # 512 MB
     volumes:
       - ar5iv-sessions:/var/ar5iv-sessions
-    # CPU pinning on a 2-vCPU host: pin the convert worker container
-    # to core 0 so the latexml-oxide thread runs uncontested. Anubis +
-    # the kernel + Caddy share core 1. The single CPU on HF 2 GB
-    # makes pinning a no-op (only one core); leave the line in for
-    # the upgrade path. Drop it if your host has only one core
-    # exposed to docker.
-    cpuset: "0"
+    # No `cpuset` pin. A bare `cpuset: "0"` confines the container to a single
+    # core — a no-op on this 1-vCPU box, but it would silently waste every extra
+    # core after a vCPU resize (the convert worker would still only ever touch
+    # core 0). Let the scheduler use whatever cores the host exposes. If strict
+    # isolation is ever wanted on a known multi-core box, set `cpuset` to an
+    # explicit core *list* sized to that box — never a bare "0".
+    #
+    # Memory guard: cap the container so a runaway conversion — or a filled
+    # 512 MB session tmpfs, which under cgroup v2 is charged to THIS cgroup —
+    # OOM-kills its own container (which `restart: unless-stopped` recovers)
+    # instead of swap-thrashing or OOM-killing the host and taking Anubis down
+    # with it. 1536m leaves ~400 MB on the 1.9 GB box for the OS + Anubis;
+    # raise it proportionally on a bigger tier.
+    mem_limit: 1536m
+    mem_reservation: 256m
 
 volumes:
   ar5iv-sessions:
