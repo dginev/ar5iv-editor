@@ -49,6 +49,12 @@ jobs:
           ref: ${{ github.event.inputs.latexml_ref || 'master' }}
           path: latexml-oxide
           fetch-depth: 0
+          # latexml-oxide is a PRIVATE repo, so the default GITHUB_TOKEN (scoped
+          # to this repo only) cannot read it. Provide a token with read access
+          # via the `LATEXML_OXIDE_TOKEN` repo secret (a fine-grained PAT with
+          # Contents:read on dginev/latexml-oxide, or a classic PAT with `repo`).
+          # Falls back to the default token if latexml-oxide is ever made public.
+          token: ${{ secrets.LATEXML_OXIDE_TOKEN || github.token }}
 
       - name: install build + runtime dependencies
         run: |
