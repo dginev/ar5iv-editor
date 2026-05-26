@@ -1,15 +1,12 @@
 import * as vscode from "vscode";
+import { locateDiagnosticToken } from "../../../frontend-core/diagnostics";
 import type { NormalizedConvertResponse, NormalizedDiagnostic } from "./conversionTypes";
 
 export class DiagnosticPublisher {
   private readonly collection = vscode.languages.createDiagnosticCollection("ar5iv");
   private readonly touched = new Set<string>();
 
-  apply(
-    activeDocument: vscode.TextDocument,
-    activeFile: string,
-    response: NormalizedConvertResponse,
-  ): void {
+  apply(activeDocument: vscode.TextDocument, response: NormalizedConvertResponse): void {
     const grouped = new Map<string, vscode.Diagnostic[]>();
     for (const diagnostic of response.diagnostics) {
       if (diagnostic.severity === "info") {
@@ -17,7 +14,7 @@ export class DiagnosticPublisher {
       }
       const uri = activeDocument.uri;
       const list = grouped.get(uri.toString()) ?? [];
-      list.push(toVscodeDiagnostic(activeDocument, activeFile, diagnostic));
+      list.push(toVscodeDiagnostic(activeDocument, diagnostic));
       grouped.set(uri.toString(), list);
     }
 
@@ -50,17 +47,42 @@ export class DiagnosticPublisher {
 
 function toVscodeDiagnostic(
   document: vscode.TextDocument,
-  activeFile: string,
   diagnostic: NormalizedDiagnostic,
 ): vscode.Diagnostic {
-  const anchored = hasActiveSourceLocation(activeFile, diagnostic);
-  const range = anchored ? diagnosticRange(document, diagnostic) : topLineRange(document);
+  const range = diagnosticRangeFor(document, diagnostic);
   const message = diagnostic.category
     ? `${diagnostic.category}: ${firstLine(diagnostic.message)}`
     : firstLine(diagnostic.message);
   const out = new vscode.Diagnostic(range, message, severity(diagnostic.severity));
   out.source = diagnostic.category ? `ar5iv: ${diagnostic.category}` : "ar5iv";
   return out;
+}
+
+/** Choose the editor range for a diagnostic. The preview is single active-file:
+ *  the converted document IS the active buffer (the hosted provider uploads it
+ *  as the session entry, so the engine's `source` is the remote entry name, not
+ *  the editor's), so we don't gate on the source name.
+ *  1. a positive engine source line → that line/column;
+ *  2. no usable line (e.g. an undefined macro inside a macro argument, which the
+ *     engine can't locate) → recover by finding the named token in the source;
+ *  3. otherwise anchor visibly at line 1. */
+function diagnosticRangeFor(
+  document: vscode.TextDocument,
+  diagnostic: NormalizedDiagnostic,
+): vscode.Range {
+  if ((diagnostic.from?.line ?? 0) > 0) {
+    return diagnosticRange(document, diagnostic);
+  }
+  const located = locateDiagnosticToken(document.getText(), diagnostic.category ?? "", diagnostic.message ?? "");
+  if (located) {
+    const lineIndex = clampLine(document, located.line - 1);
+    const line = document.lineAt(lineIndex);
+    const fromCol = clampColumn(line, located.column - 1);
+    const toCol = clampColumn(line, fromCol + located.length);
+    if (toCol > fromCol) return new vscode.Range(lineIndex, fromCol, lineIndex, toCol);
+    return visibleLineRange(document, line);
+  }
+  return topLineRange(document);
 }
 
 function diagnosticRange(
@@ -123,40 +145,6 @@ function clampColumn(line: vscode.TextLine, column: number): number {
 
 function firstLine(message: string): string {
   return message.split("\n")[0] ?? message;
-}
-
-function hasActiveSourceLocation(activeFile: string, diagnostic: NormalizedDiagnostic): boolean {
-  if ((diagnostic.from?.line ?? 0) <= 0) return false;
-  if (!diagnostic.source || diagnostic.source === "Anonymous String") return true;
-  return matchesActiveBuffer(activeFile, diagnostic.source);
-}
-
-function matchesActiveBuffer(activeFile: string, source: string | undefined): boolean {
-  if (!source || source === "Anonymous String") return false;
-  const normalizedSource = normalizePath(source);
-  const normalizedActive = normalizePath(activeFile);
-  if (normalizedSource === normalizedActive) return true;
-
-  const sourceBase = baseName(normalizedSource);
-  const activeBase = baseName(normalizedActive);
-  if (sourceBase === activeBase) return true;
-
-  const sourceStem = stripExtension(sourceBase);
-  const activeStem = stripExtension(activeBase);
-  return sourceStem === activeStem;
-}
-
-function normalizePath(path: string): string {
-  return path.split("\\").join("/").toLowerCase();
-}
-
-function baseName(path: string): string {
-  return path.split("/").pop() ?? path;
-}
-
-function stripExtension(path: string): string {
-  const dot = path.lastIndexOf(".");
-  return dot >= 0 ? path.slice(0, dot) : path;
 }
 
 function severity(value: NormalizedDiagnostic["severity"]): vscode.DiagnosticSeverity {

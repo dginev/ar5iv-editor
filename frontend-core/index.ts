@@ -33,3 +33,4 @@ export {
   preloadFor,
   splitPreamble,
 } from "./convert";
+export { locateDiagnosticToken, type DiagnosticSpan } from "./diagnostics";

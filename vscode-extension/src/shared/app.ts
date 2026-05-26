@@ -192,7 +192,7 @@ class Ar5ivExtensionApp {
       }
       this.latestAcceptedRevision = response.revision;
       this.preview.renderResult(request, response);
-      this.diagnostics.apply(document, request.activeFile, response);
+      this.diagnostics.apply(document, response);
       if (response.log) {
         this.output.appendLine(`--- conversion ${response.id} (${response.status}) ---`);
         this.output.appendLine(response.log);

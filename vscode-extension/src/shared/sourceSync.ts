@@ -23,7 +23,15 @@ export async function revealSource(message: SourceRevealRequest): Promise<void> 
   if (!uri) return;
 
   const document = await vscode.workspace.openTextDocument(uri);
+  // Reveal in the document's own editor column if it's already open, else the
+  // first column — never the active column, which is the preview webview's
+  // (opening there would replace/hide the preview). Keeps the preview beside
+  // the source on a reverse-nav double-click.
+  const existing = vscode.window.visibleTextEditors.find(
+    (candidate) => candidate.document.uri.toString() === uri.toString(),
+  );
   const editor = await vscode.window.showTextDocument(document, {
+    viewColumn: existing?.viewColumn ?? vscode.ViewColumn.One,
     preview: false,
     preserveFocus: false,
   });
