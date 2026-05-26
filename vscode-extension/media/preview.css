@@ -1,0 +1,186 @@
+/* Chrome around the ar5iv preview shadow root in the VS Code webview: the
+   toolbar, status line, timings breakdown, and log view. The rendered ar5iv
+   document itself is styled by the shared preview core inside the shadow root
+   (preview-core/host.ts + ar5iv.css); nothing here leaks into it. */
+:root {
+  color-scheme: light dark;
+  --rule: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  --muted: var(--vscode-descriptionForeground, #888);
+  --bad: var(--vscode-errorForeground, #d8000c);
+  --warn: var(--vscode-editorWarning-foreground, #d09e05);
+  --ok: var(--vscode-testing-iconPassed, #2e8b57);
+  --mono: var(--vscode-editor-font-family, ui-monospace, monospace);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.7rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--vscode-editor-background);
+}
+
+.title {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.7rem;
+  height: 1.7rem;
+  padding: 0 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+.tool-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+}
+.tool-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 0;
+}
+.tool-btn.active {
+  background: var(--vscode-toolbar-activeBackground, rgba(128, 128, 128, 0.25));
+  border-color: var(--rule);
+}
+
+.statusbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.3rem 0.7rem;
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 0.82em;
+}
+
+.status {
+  flex: 0 0 auto;
+  color: var(--muted);
+  cursor: pointer;
+}
+.status[data-kind="error"],
+.status[data-kind="fatal"] {
+  color: var(--bad);
+}
+.status[data-kind="warning"] {
+  color: var(--warn);
+}
+.status[data-kind="ok"] {
+  color: var(--ok);
+}
+
+.timings {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.85rem;
+  color: var(--muted);
+}
+.timings .stage {
+  display: inline-flex;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+.timings .stage .lbl {
+  opacity: 0.75;
+}
+.timings .stage.tier-ok .val {
+  color: var(--ok);
+}
+.timings .stage.tier-warn .val {
+  color: var(--warn);
+}
+.timings .stage.tier-bad .val {
+  color: var(--bad);
+}
+
+.version {
+  flex: 0 0 auto;
+  color: var(--muted);
+  text-decoration: none;
+}
+.version:hover {
+  color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+  text-decoration: underline;
+}
+
+main {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+#preview {
+  min-height: 100%;
+  padding: 1.2rem;
+  overflow-wrap: anywhere;
+}
+
+/* In-flight watermark: a faint diagonal sheen while a conversion is pending,
+   so a slow render reads as working rather than frozen. */
+#preview.loading::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 12px,
+    var(--vscode-editor-foreground) 12px,
+    var(--vscode-editor-foreground) 13px
+  );
+  opacity: 0.04;
+}
+
+.log {
+  margin: 0;
+  padding: 1rem 1.2rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: 0.86em;
+  color: var(--vscode-editor-foreground);
+}

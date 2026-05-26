@@ -1,0 +1,7 @@
+src/**
+dist-types/**
+**/*.map
+tsconfig.json
+esbuild.*.js
+node_modules/**
+!bin/**

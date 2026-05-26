@@ -51,6 +51,8 @@ async fn includegraphics_resolves_and_path_is_rewritten() {
         converter: Arc::new(Converter::new(2)),
         sessions:  Arc::new(SessionRegistry::new(cfg)),
         examples:  Arc::new(ExampleCatalog::load().expect("examples manifest")),
+        vscode_web_dir: Arc::new(std::path::PathBuf::from("vscode-web")),
+        vscode_ext_dir: Arc::new(std::path::PathBuf::from("vscode-extension")),
     };
     let app = router(state);
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

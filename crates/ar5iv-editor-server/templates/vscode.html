@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}ar5iv VS Code{% endblock %}
+{% block main %}
+<section class="prose vscode-preview">
+  <h1>ar5iv VS Code</h1>
+  <p class="lede">
+    A VS Code editing surface for LaTeX documents that reuses the same ar5iv
+    conversion, preview rendering, and source-map model as the
+    <a href="/editor">web editor</a> — sharing one
+    <code>frontend-core/</code> across all three surfaces.
+  </p>
+
+  <h2>Browser VS Code (this route)</h2>
+  <p>
+    <code>/vscode</code> serves a self-hosted VS Code for the Web workbench with
+    the ar5iv extension preloaded as a built-in and conversions pointed at this
+    server. You are seeing this launcher page because the VS Code Web build has
+    not been vendored yet. To enable the workbench:
+  </p>
+  <pre class="prose-pre"><code>cd vscode-extension
+npm install
+npm run fetch:vscode-web   # downloads the pinned VS Code Web build into ./vscode-web
+npm run build              # bundles the extension + webview assets</code></pre>
+  <p>
+    Then restart the server (it serves <code>./vscode-web</code> at
+    <code>/vscode-static</code> and the extension at <code>/vscode-ext</code>),
+    and reload this page. Override the build location with
+    <code>AR5IV_VSCODE_WEB_DIR</code>.
+  </p>
+
+  <h2>Local Extension (the “code” plugin)</h2>
+  <p>
+    The same extension in <code>vscode-extension/</code> runs as a desktop VS
+    Code plugin: a persistent preview webview that refreshes on edits, publishes
+    diagnostics, and supports two-way source-map navigation. Build it with
+    <code>npm run build:all</code> (or <code>npm run package:vsix</code>) and
+    launch it from VS Code's extension development host. Desktop auto mode runs
+    a managed local <code>ar5iv-editor</code> server; set
+    <code>ar5iv.conversionMode</code>/<code>ar5iv.backendUrl</code> for explicit
+    hosted testing.
+  </p>
+
+  <table class="prose-table">
+    <thead>
+      <tr><th>Mode</th><th>Status</th><th>Use</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th>Backend (managed)</th>
+        <td>Default</td>
+        <td>Desktop auto mode starts a local server; browser mode uses this host.</td>
+      </tr>
+      <tr>
+        <th>Native</th>
+        <td>Adapter contract ready</td>
+        <td>Ubuntu local conversion once the N-API module exists.</td>
+      </tr>
+      <tr>
+        <th>Executable</th>
+        <td>Guarded stub</td>
+        <td>Blocked until <code>latexml-oxide</code> exposes structured output.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="prose-footer">
+    Architecture notes and handoff status live in
+    <a href="https://github.com/dginev/ar5iv-editor/blob/main/docs/VSCODE_PREVIEW.md">docs/VSCODE_PREVIEW.md</a>.
+  </p>
+</section>
+{% endblock %}

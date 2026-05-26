@@ -13,6 +13,7 @@ pub mod session;
 pub mod templates;
 pub mod ws;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
@@ -30,6 +31,11 @@ pub struct AppState {
     pub converter: Arc<Converter>,
     pub sessions:  Arc<SessionRegistry>,
     pub examples:  Arc<ExampleCatalog>,
+    /// Vendored VS Code Web build root, used by the `/vscode` workbench route to
+    /// locate the bootstrap HTML. See [`config::Config::vscode_web_dir`].
+    pub vscode_web_dir: Arc<PathBuf>,
+    /// ar5iv extension root, loaded into the web workbench as a built-in.
+    pub vscode_ext_dir: Arc<PathBuf>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -39,6 +45,7 @@ pub fn router(state: AppState) -> Router {
         .route("/schemas", get(routes::schemas))
         .route("/help", get(routes::help))
         .route("/editor", get(routes::editor))
+        .route("/vscode", get(routes::vscode))
         .route("/convert", any(ws::ws_handler))
         .merge(files::router())
         .route("/api/version", get(routes::version))

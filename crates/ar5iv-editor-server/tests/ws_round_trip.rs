@@ -38,6 +38,8 @@ async fn ws_convert_round_trips_through_engine() {
         converter: Arc::new(Converter::new(2)),
         sessions:  Arc::new(SessionRegistry::new(session_cfg)),
         examples:  Arc::new(ExampleCatalog::load().expect("examples manifest")),
+        vscode_web_dir: Arc::new(std::path::PathBuf::from("vscode-web")),
+        vscode_ext_dir: Arc::new(std::path::PathBuf::from("vscode-extension")),
     };
     let app = router(state);
 
@@ -146,6 +148,8 @@ async fn ws_resolves_input_against_session_dir() {
         converter: Arc::new(Converter::new(2)),
         sessions:  Arc::new(SessionRegistry::new(session_cfg)),
         examples:  Arc::new(ExampleCatalog::load().expect("examples manifest")),
+        vscode_web_dir: Arc::new(std::path::PathBuf::from("vscode-web")),
+        vscode_ext_dir: Arc::new(std::path::PathBuf::from("vscode-extension")),
     };
     let app = router(state);
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

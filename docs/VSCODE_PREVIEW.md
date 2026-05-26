@@ -12,7 +12,26 @@ The goal is not to build a second editor. The goal is to make VS Code the
 editor surface while reusing one ar5iv preview, diagnostics, source-map, and
 conversion lifecycle model across local and web deployments.
 
+> **Plan revision (2026-05-26).** Per direction, the build order was flipped to
+> *preview fidelity first, then a self-hosted VS Code for the Web workbench at
+> `/vscode`*, and a hard requirement was added: **maximize reuse across the three
+> preview surfaces** — `/editor` (CodeMirror), `/vscode` (browser VS Code), and
+> the local desktop "code" plugin — rather than maintaining parallel
+> implementations. The shared logic now lives in a framework-agnostic
+> `frontend-core/` package consumed by all three. See the
+> "2026-05-26 Shared Core" handoff section at the end for the implemented state.
+
 ## Decisions
+
+0. **One shared `frontend-core/` across all three surfaces.**
+   The preview rendering (shadow-DOM ar5iv stylesheet stack, idiomorph
+   re-render), the precision source-map sync in both directions, the
+   reverse-nav content recovery, source-locator parsing, and the convert-request
+   shaping (preamble split, document/fragment detection, preload sets) are
+   framework-agnostic and must not be duplicated. They live in `frontend-core/`
+   with no bundler-resolved dependency (idiomorph is injected). `/editor` and the
+   VS Code webview are thin adapters that supply only environment specifics:
+   the color-token → theme-var mapping, stylesheet URLs, and navigation glue.
 
 1. **One shared VS Code app core.**
    Desktop and browser builds must share command registration, document
@@ -517,3 +536,263 @@ Start with the smallest path that validates the architecture:
 Do not start with `/vscode`. Build the local native provider first because it
 proves the hardest architectural decision. Add browser/backend mode only after
 the shared app core is working against one real provider.
+
+## Implementation Notes And Handoff
+
+### 2026-05-26 Codex Progress
+
+Reference checked:
+
+- [`shd101wyy/vscode-markdown-preview-enhanced`](https://github.com/shd101wyy/vscode-markdown-preview-enhanced)
+  is the closest UX precedent. The useful lessons for ar5iv are:
+  command-driven preview opening, a persistent webview preview surface,
+  editor/preview scroll sync as core behavior, broad configuration around one
+  rendering core, and a privacy posture that is explicit about local vs remote
+  execution. We should copy those architectural instincts, not its Markdown
+  processing stack.
+
+Files added so far:
+
+- `vscode-extension/package.json`, `tsconfig.json`, `esbuild.desktop.js`,
+  `esbuild.web.js`, `.vscodeignore`.
+- `vscode-extension/src/shared/*`: normalized conversion contract, shared
+  activation/app lifecycle, document request construction, diagnostics,
+  preview webview, source reveal helpers, and hosted backend adapter.
+- `vscode-extension/src/desktop/*`: desktop entry point, runtime provider
+  selection, native-provider loader contract, and executable fallback stub.
+- `vscode-extension/src/web/*`: web entry point and hosted-backend runtime.
+
+Current implementation shape:
+
+- `activateAr5ivExtension(context, runtime)` is shared across desktop and web.
+- The preview is intentionally one-panel/active-document for the first cut.
+- Stale responses are rejected by request id and VS Code document version.
+- Diagnostics are normalized into `vscode.DiagnosticCollection`.
+- Preview-to-editor navigation uses `data-sourcepos` in the webview and reveals
+  the active document. Multi-file source resolution is still designed into the
+  message payload but not implemented.
+- Browser/hosted mode writes the active file to a blank hosted session, then
+  sends the normal WebSocket convert request.
+- Desktop `auto` mode starts the managed local backend first, then falls back
+  to native and executable providers only if the backend provider is unavailable.
+  Explicit `native` and `executable` modes remain available for testing.
+
+Important caveats for the next agent:
+
+- The native N-API module does not exist yet. The loader expects a module that
+  exports `createConversionProvider()`.
+- The hosted backend provider only overlays the active file. It does not yet
+  upload workspace dependencies (`\input`, graphics, `.bib`, `.bbl`).
+- The preview webview currently injects converter HTML directly. This matches
+  trusted local/hosted ar5iv output assumptions, but a production web extension
+  should add a sanitizer or a stricter ar5iv-output trust boundary before
+  exposing arbitrary remote conversion responses.
+- The `/vscode` Rust route is wired as a launcher/status page. It does not
+  yet serve a browser VS Code workbench or versioned extension assets.
+- `Cargo.lock` was dirty before this work started and should not be reverted
+  without checking with the user.
+
+### 2026-05-26 Critical Review
+
+Critical gaps:
+
+- **The first test path is the managed backend, not native mode.** The desktop
+  runtime has a native-loader contract, but no N-API module exists yet. Local
+  testing should use desktop `auto` mode and a bundled or development
+  `ar5iv-editor` server binary.
+- **Hosted mode only writes the active file.** `\input`, graphics,
+  bibliography files, and generated `.bbl` dependencies are not uploaded from
+  the workspace. Single-file examples are the only reliable test cases.
+- **Session expiry is not recovered.** The web editor catches
+  `session_expired` and reopens the slot. The VS Code hosted provider currently
+  turns a 410 into a fatal preview/log message and stays stuck until the
+  provider/session is recreated.
+- **Provider startup errors are only partially polished.** `openPreview()` now
+  routes startup through the guarded conversion path, so failures can render in
+  the preview panel, but the UI still needs a targeted recovery action such as
+  opening the server output channel.
+- **The preview HTML is trusted too broadly.** CSP blocks scripts, but the
+  webview still injects converter HTML directly with `innerHTML`. Before public
+  browser use, add a sanitizer or a stricter ar5iv-output trust boundary.
+
+UI sharp edges:
+
+- **The VS Code preview is not visually equivalent to `/editor`.** It does not
+  yet load the same ar5iv CSS/font stack inside the webview, so output can look
+  more like raw LaTeXML HTML than the web editor showcase.
+- **No visible controls beyond status.** There is no refresh button, provider
+  indicator, log toggle, source-sync toggle, or quick link to extension
+  settings. Markdown Preview Enhanced is a useful precedent here: keep the
+  preview surface simple, but expose the expected preview commands around it.
+- **Status is too terse.** Conversion failures collapse into `error` plus raw
+  log text. Users need a short actionable message such as "backend unreachable",
+  "session expired", or "native converter missing".
+- **Scroll sync is approximate.** Editor-to-preview chooses the closest source
+  line and preview-to-editor resolves only the active document. Multi-file
+  source positions are carried in the payload but not implemented.
+- **No output affordance.** The output channel receives logs, but the user is
+  not prompted or given a command to open it when conversion fails.
+
+Recommended next fixes before expanding scope:
+
+1. Keep managed backend mode as the documented local MVP and add a command or
+   status action that shows the active provider/backend URL.
+2. Mirror `/editor` preview styling in the webview using packaged CSS assets
+   and `asWebviewUri`.
+3. Add hosted-provider session-expiry recovery and a backend health check at
+   provider creation.
+4. Upload a conservative workspace dependency set for hosted mode:
+   `.tex`, `.sty`, `.cls`, `.bib`, `.bbl`, and common image formats.
+5. Add a real preview toolbar: refresh, open log, reveal source toggle, and
+   provider/status indicator.
+
+### 2026-05-26 Diagnostics Marker Update
+
+- VS Code diagnostics now mirror the web editor more closely: info-level engine
+  chatter is filtered out of editor markers, diagnostics are matched to the
+  active buffer by path, basename, or stem, and one-based engine line/column
+  locations are converted into clamped VS Code ranges.
+- Zero-width or column-only converter locations are expanded to a visible range
+  so errors get the normal VS Code squiggle/gutter marker while editing.
+- Multi-file diagnostic routing is still not complete. Diagnostics whose source
+  does not match the active buffer are kept visible on line 1 instead of being
+  mapped to other workspace files.
+
+### 2026-05-26 Diagnostics Anchoring Rule
+
+- Diagnostics now use a two-tier placement rule in the VS Code extension:
+  active-source diagnostics with a positive source line are placed inline at
+  the reported token-locator line; diagnostics without a clear active-file
+  source identity or positive line are still shown, but anchored visibly at
+  line 1.
+- This keeps global/ambiguous converter messages visible without pretending
+  their engine-internal line numbers refer to the user document. Inline errors
+  such as an undefined `\foo` should land at the actual source line when the
+  backend was built with `token-locators` and conversion runs with source maps
+  enabled.
+
+### 2026-05-26 Anonymous Source Diagnostic Adjustment
+
+- Positive-line diagnostics from `Anonymous String` are now treated as active
+  document diagnostics. This matches the web editor behavior and avoids moving
+  real token-locator errors to line 1 just because the converter source label is
+  weak. Diagnostics still fall back to line 1 when they have no positive source
+  line or point at a non-active file.
+
+
+
+### 2026-05-26 Managed Local Server Packaging
+
+- Desktop auto mode now prefers a managed backend provider. On first preview it
+  starts a local `ar5iv-editor` server, points the hosted-backend transport at
+  that localhost URL, and registers disposal with the VS Code extension context
+  so the child process is terminated when the extension host shuts down.
+- The managed server chooses an ephemeral `127.0.0.1` port, sets
+  `AR5IV_EDITOR_BIND` to that port, stores sessions under extension global
+  storage, waits for `GET /api/version`, and streams stdout/stderr into the
+  `ar5iv Server` output channel.
+- Binary resolution order is `ar5iv.serverPath`,
+  `vscode-extension/bin/ar5iv-editor`, `target/release/ar5iv-editor`, then
+  `target/debug/ar5iv-editor`. The packaged/self-contained path is the `bin/`
+  binary; the target paths are development conveniences only.
+- `npm run build:server` builds `ar5iv-editor` in release mode and copies it
+  into `vscode-extension/bin/`; `npm run build:all` builds both the server and
+  the desktop/web extension bundles. `npm run package:vsix` runs the full build
+  and emits `ar5iv-vscode.vsix`. `.vscodeignore` explicitly includes
+  `bin/**` for VSIX packaging.
+- `ar5iv.managedServer.enabled=false` keeps the previous hosted-backend testing
+  path available through `ar5iv.backendUrl`. Browser/web extension mode still
+  uses the hosted backend and cannot start local processes.
+
+Remaining managed-server gaps:
+
+- We have not added platform-specific packaging metadata yet. The current
+  bundled binary path assumes the package is built on the target platform, so
+  cross-platform VSIX distribution still needs per-platform artifacts or
+  extension-target filtering.
+- The backend upload/session limitations remain: active-file-only upload, no
+  automatic session-expiry recovery, and no workspace dependency sync.
+- Startup failure is surfaced through the preview/log path, but the preview
+  panel still needs a polished user-facing recovery state with an action to
+  open the `ar5iv Server` output channel.
+
+### 2026-05-26 Shared Core, Preview Fidelity, and Web Workbench
+
+This is the current authoritative state; earlier handoff notes above describe
+the path here.
+
+**Shared `frontend-core/` (repo root).** One framework-agnostic package, zero
+bundler-resolved dependencies (idiomorph is injected by each adapter), consumed
+by all three surfaces:
+
+- `host.ts` — shadow-DOM host + the structural ar5iv CSS (the environment-
+  independent half) + theme switching + idiomorph render + empty state.
+- `forward-sync.ts` — `scrollPreviewToSource`: reading-order anchor + content-
+  fingerprint refinement; arrival flash via the CSS Custom Highlight API.
+- `reverse-sync.ts` — `bindPreviewSourceNav`: double-click → `{tag,line,col,
+  word,text}`.
+- `recover.ts` — `recoverSourcePosition` (pure; runs in the browser *and* the
+  VS Code extension host for reverse-nav).
+- `sourcepos.ts` — locator parsing + tag/basename resolution.
+- `convert.ts` — preamble split, document/fragment detection, preload sets.
+- `preview.ts` / `index.ts` — the `createPreview(config)` controller + package
+  entry.
+
+Adapters:
+
+- `frontend/src/preview.ts` — web editor adapter: chrome-theme token mapping,
+  `/static/css/...` URLs, idiomorph + KaTeX fallback. Keeps its prior public
+  API, so `frontend/src/main.ts` was only trimmed (its `recoverSourcePosition`,
+  `splitPreamble`, `hasDocumentclass`, and inline preload lists now come from
+  `frontend-core`).
+- `vscode-extension/src/webview/preview.ts` — VS Code webview adapter:
+  `--vscode-*` token mapping, `asWebviewUri` stylesheet URLs (via a bootstrap
+  JSON), idiomorph, plus the toolbar / status / timings / live "converting (Xs)"
+  ticker / loading watermark / log toggle chrome.
+
+Regression gates: `frontend` Vite build, `vscode-extension` `npm run typecheck`
++ `npm run build`, `cargo build -p ar5iv-editor-server`, and the touched
+integration tests all pass. (`tests/search_paths_de_risk.rs` fails on pre-
+existing latexml API drift, unrelated to this work.)
+
+**Preview fidelity (both VS Code deployments).** The webview now renders inside
+a shadow root carrying the same `ar5iv.css` + `ar5iv-fonts.css` stack as
+`/editor` (bundled into `vscode-extension/media/` by `npm run build:assets`),
+maps ar5iv color tokens onto the active VS Code theme, morphs with idiomorph,
+runs the full two-way source-map sync, and shows a timings breakdown + backend
+version footer (`/api/version`, plumbed through the hosted provider). Math
+relies on native MathML (Chromium webview); KaTeX fallback is editor-only.
+
+**Self-hosted `/vscode` workbench.** The official VS Code Web "web-standalone"
+build is vendored by `vscode-extension/scripts/fetch-vscode-web.mjs`
+(`npm run fetch:vscode-web`; pinned version + sha256; extracts to repo-root
+`vscode-web/`, gitignored). The server serves it at `/vscode-static`, the
+extension root at `/vscode-ext`, and renders the standalone `workbench.html` at
+`/vscode` with an injected `IWorkbenchConstructionOptions` that (a) loads the
+ar5iv extension as an `additionalBuiltinExtension`, (b) sets
+`ar5iv.backendUrl` to this origin via `configurationDefaults`, and (c) points
+the webview endpoint at `/vscode-static`. Config paths: `AR5IV_VSCODE_WEB_DIR`,
+`AR5IV_VSCODE_EXT_DIR`. When the build isn't vendored, `/vscode` degrades to a
+launcher page with the fetch instructions. HTTP-level serving is verified
+(workbench HTML + config injection, `/vscode-static/out/nls.messages.js`,
+`/vscode-ext/{package.json,dist/web/extension.js,media/preview.js}` all 200).
+
+Remaining for `/vscode`:
+
+- **In-browser validation pending.** The workbench boot, extension activation,
+  and webview rendering have not been exercised in a real browser yet (no
+  headless browser in the work environment). This is the next concrete step.
+- **Webview origin isolation.** `webEndpointUrlTemplate` is set to the same
+  origin (no `{{uuid}}` subdomain, since self-hosting has no wildcard DNS).
+  This is the most likely thing to need tuning during browser validation;
+  options include a fixed webview subdomain or COOP/COEP headers.
+- **No sample file / filesystem.** The workbench opens an empty `tmp:`
+  workspace. A memfs provider (cf. `@vscode/test-web`'s `fs-provider`) seeding
+  an example `.tex` + opening the preview would make the demo self-explanatory.
+- **`/vscode-ext` serves the whole extension dir.** Fine for a demo; a pruned
+  served copy (package.json + `dist/web` + `media`) is the hardening step.
+
+Carried-over gaps (unchanged): native N-API provider does not exist; hosted
+mode uploads only the active file (no `\input`/graphics/`.bib`/`.bbl` sync) and
+has no session-expiry recovery; multi-file reverse-nav resolves by workspace
+basename search only; cross-platform VSIX packaging needs per-target artifacts.

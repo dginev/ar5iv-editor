@@ -47,6 +47,7 @@ Expect ongoing rough edges around package coverage; see *Known gaps*.
 | DOM updates   | [Idiomorph](https://github.com/bigskysoftware/idiomorph)     |
 | Math render   | Native browser MathML, KaTeX as a fallback                   |
 | Bundler       | Vite + TypeScript                                            |
+| VS Code preview | Extension package in `vscode-extension/`, bundled with esbuild |
 
 ## Layout
 
@@ -75,6 +76,11 @@ ar5iv-editor/
 │   ├── _index.json                         manifest used by both sides
 │   └── <slug>/main.tex                     one per example
 ├── deploy/                                 docker-compose + Anubis policy
+├── vscode-extension/                       VS Code preview extension MVP
+│   └── src/
+│       ├── shared/                         app core, provider boundary, webview
+│       ├── desktop/                        desktop runtime + native/fallback adapters
+│       └── web/                            browser runtime + hosted backend adapter
 └── frontend/                               Vite + TS + CodeMirror 6
     └── src/
         ├── main.ts                         bootstrap + convert chain
@@ -120,6 +126,71 @@ npm run dev
 ```
 
 Open <http://localhost:5173/editor>.
+
+## VS Code extension local test
+
+The VS Code extension is currently an MVP. Desktop auto mode starts a managed
+local `ar5iv-editor` server by default, uses it for previews, and stops it when
+the VS Code extension host exits.
+
+1. Build the bundled server binary and extension:
+
+```sh
+cd vscode-extension
+npm install
+npm run build:all
+```
+
+To produce an installable VSIX after testing, run `npm run package:vsix` from
+`vscode-extension/`; the VSIX includes `bin/ar5iv-editor`.
+
+For a faster development loop after the Rust server binary already exists, use
+`npm run build`. The managed server resolves binaries in this order: configured
+`ar5iv.serverPath`, `vscode-extension/bin/ar5iv-editor`,
+`target/release/ar5iv-editor`, then `target/debug/ar5iv-editor`.
+
+2. Open a VS Code extension development host from the repository root:
+
+```sh
+cd ..
+code --extensionDevelopmentPath="$(pwd)/vscode-extension" examples/equations
+```
+
+3. Open `main.tex`, run `ar5iv: Open Preview` from the Command Palette, then
+edit the source. The extension starts a localhost backend automatically. The
+`ar5iv Server` output channel shows the selected binary, backend URL, and
+server logs. Diagnostics should appear in VS Code Problems and in the editor
+gutter.
+
+Optional settings:
+
+```json
+{
+  "ar5iv.managedServer.enabled": true,
+  "ar5iv.serverPath": ""
+}
+```
+
+To test against an already running remote or local backend instead, disable the
+managed server:
+
+```json
+{
+  "ar5iv.conversionMode": "backend",
+  "ar5iv.managedServer.enabled": false,
+  "ar5iv.backendUrl": "http://127.0.0.1:3000"
+}
+```
+
+Current local-test constraints:
+
+- Use a single-file example first. Backend mode currently uploads only the
+  active file, so `\input`, images, and bibliography side files are not yet
+  reliable from a workspace.
+- If the server session expires, reload the extension host or rerun the command;
+  automatic session recovery is not implemented yet.
+- The preview webview does not yet load the full `/editor` ar5iv CSS/font stack,
+  so visual parity with the web editor is incomplete.
 
 ## Production build
 

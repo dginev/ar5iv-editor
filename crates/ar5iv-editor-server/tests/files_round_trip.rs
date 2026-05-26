@@ -32,6 +32,8 @@ impl TestRig {
             converter: Arc::new(Converter::new(1)),
             sessions:  Arc::new(SessionRegistry::new(cfg)),
             examples:  Arc::new(ExampleCatalog::load().expect("examples manifest")),
+            vscode_web_dir: Arc::new(std::path::PathBuf::from("vscode-web")),
+            vscode_ext_dir: Arc::new(std::path::PathBuf::from("vscode-extension")),
         };
         let app = router(state);
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
