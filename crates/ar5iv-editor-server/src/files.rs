@@ -412,6 +412,9 @@ async fn upload_files(
                 let kind = file_kind_for(&p);
                 written.push(FileMeta { path: p, size: 0, kind });
             }
+            // Carry through any entries the archive dropped for a disallowed
+            // extension, so they join this batch's skipped list.
+            skipped.extend(outcome.skipped);
             continue;
         }
         if !is_allowed_extension(&filename) {
@@ -567,7 +570,9 @@ async fn upload_archive(
             size: 0, // size known per-entry but not surfaced individually here
         })
         .collect();
-    Ok(Json(UploadAck { files, version, skipped: Vec::new() }))
+    // Files dropped for a disallowed extension (e.g. `.mp4`) — the archive's
+    // good files were kept; report the rest so the client can surface them.
+    Ok(Json(UploadAck { files, version, skipped: outcome.skipped }))
 }
 
 async fn export_zip(
@@ -907,7 +912,7 @@ fn file_kind_for(path: &str) -> FileKind {
 fn is_allowed_extension(path: &str) -> bool {
     matches!(
         std::path::Path::new(path).extension().and_then(|e| e.to_str()),
-        Some("tex" | "sty" | "cls" | "bib" | "bst" | "bbl" | "def" | "ldf"
+        Some("tex" | "sty" | "cls" | "clo" | "bib" | "bst" | "bbl" | "def" | "ldf"
              | "png" | "jpg" | "jpeg" | "gif" | "svg" | "pdf" | "eps"
              | "csv" | "dat" | "txt" | "md" | "toml" | "json" | "yaml" | "yml")
     )

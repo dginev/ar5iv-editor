@@ -42,6 +42,10 @@ pub struct UnpackOutcome {
     pub bytes_written: u64,
     pub files_written: u32,
     pub paths:         Vec<String>,
+    /// Entries dropped because their extension isn't allowed (e.g. `.mp4`).
+    /// The good files were still extracted; this lets the caller tell the
+    /// user what was left out.
+    pub skipped:       Vec<String>,
 }
 
 /// Sniff the archive format from the leading bytes. The client's
@@ -76,13 +80,13 @@ pub fn unpack_into(
     cfg: &SessionConfig,
 ) -> Result<UnpackOutcome, AppError> {
     let format = sniff_format(bytes)?;
-    let plan = build_plan(bytes, format, cfg)?;
+    let Plan { entries, skipped } = build_plan(bytes, format, cfg)?;
 
     let mut written: u64 = 0;
     let mut count: u32 = 0;
-    let mut paths: Vec<String> = Vec::with_capacity(plan.entries.len());
+    let mut paths: Vec<String> = Vec::with_capacity(entries.len());
 
-    for entry in plan.entries {
+    for entry in entries {
         let target = dest_dir.join(&entry.rel_path);
         if target.exists() {
             return Err(AppError::bad_request(format!(
@@ -101,7 +105,7 @@ pub fn unpack_into(
         paths.push(entry.rel_path.to_string_lossy().replace('\\', "/"));
     }
 
-    Ok(UnpackOutcome { bytes_written: written, files_written: count, paths })
+    Ok(UnpackOutcome { bytes_written: written, files_written: count, paths, skipped })
 }
 
 /// Unpack overlaying onto an existing session directory. Extracts
@@ -116,7 +120,7 @@ pub fn unpack_overlay(
     policy: ConflictPolicy,
 ) -> Result<UnpackOutcome, AppError> {
     let format = sniff_format(bytes)?;
-    let plan = build_plan(bytes, format, cfg)?;
+    let Plan { entries, skipped } = build_plan(bytes, format, cfg)?;
 
     let staging = session_dir.join(format!(".staging-{}", random_suffix()));
     std::fs::create_dir_all(&staging)
@@ -125,9 +129,9 @@ pub fn unpack_overlay(
     let result = (|| -> Result<UnpackOutcome, AppError> {
         let mut written: u64 = 0;
         let mut count: u32 = 0;
-        let mut paths: Vec<String> = Vec::with_capacity(plan.entries.len());
+        let mut paths: Vec<String> = Vec::with_capacity(entries.len());
 
-        for entry in &plan.entries {
+        for entry in &entries {
             let final_target = session_dir.join(&entry.rel_path);
             if final_target.exists() {
                 match policy {
@@ -160,7 +164,7 @@ pub fn unpack_overlay(
                 .map_err(|e| AppError::internal(format!("rename into place: {e}")))?;
         }
 
-        Ok(UnpackOutcome { bytes_written: written, files_written: count, paths })
+        Ok(UnpackOutcome { bytes_written: written, files_written: count, paths, skipped })
     })();
 
     // Always clean up the staging dir.
@@ -251,6 +255,12 @@ struct PlannedEntry {
 #[derive(Debug)]
 struct Plan {
     entries: Vec<PlannedEntry>,
+    /// Relative paths of entries dropped because their extension isn't in the
+    /// allowlist (e.g. a stray `.mp4`). The archive still extracts its good
+    /// files; these are reported back so the client can surface what was
+    /// skipped. Security/quota violations (traversal, symlinks, oversize,
+    /// duplicates) are NOT skipped — they still abort the whole unpack.
+    skipped: Vec<String>,
 }
 
 fn build_plan(
@@ -280,6 +290,7 @@ fn build_plan(
     let mut total: u64 = 0;
     let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut planned: Vec<PlannedEntry> = Vec::with_capacity(raw_entries.len());
+    let mut skipped: Vec<String> = Vec::new();
 
     for re in raw_entries {
         let RawEntry { name, bytes: entry_bytes, kind } = re;
@@ -302,10 +313,12 @@ fn build_plan(
         }
 
         if !is_allowed_extension(&rel) {
-            return Err(AppError::bad_request(format!(
-                "archive: extension not in allowlist for {}",
-                rel.display()
-            )));
+            // Drop the individual file rather than failing the whole archive —
+            // a stray `.mp4` shouldn't sink a project full of `.tex`. Record
+            // it (and don't count it toward the size quota — this check is
+            // before the byte accounting below) so the client can report it.
+            skipped.push(rel.to_string_lossy().replace('\\', "/"));
+            continue;
         }
 
         let entry_size = entry_bytes.len() as u64;
@@ -336,7 +349,7 @@ fn build_plan(
         planned.push(PlannedEntry { rel_path: rel, bytes: entry_bytes });
     }
 
-    Ok(Plan { entries: planned })
+    Ok(Plan { entries: planned, skipped })
 }
 
 #[derive(Debug)]
@@ -539,7 +552,7 @@ fn is_allowed_extension(rel: &Path) -> bool {
     matches!(
         rel.extension().and_then(|e| e.to_str()),
         Some(
-            "tex" | "sty" | "cls" | "bib" | "bst" | "bbl"
+            "tex" | "sty" | "cls" | "clo" | "bib" | "bst" | "bbl"
             | "png" | "jpg" | "jpeg" | "gif" | "svg" | "pdf" | "eps"
             | "csv" | "dat" | "txt" | "md" | "toml" | "json" | "yaml" | "yml"
         )
@@ -773,12 +786,33 @@ mod tests {
     }
 
     #[test]
-    fn rejects_disallowed_extensions() {
+    fn skips_disallowed_extensions_keeps_good_files() {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = test_cfg();
-        let zip = make_zip(&[("evil.exe", b"MZ")]);
-        let err = unpack_into(&zip, tmp.path(), &cfg).unwrap_err();
-        assert!(matches!(err, AppError::BadRequest(_)));
+        // A stray `.mp4` next to real source: the archive must extract the
+        // good files and report the bad one as skipped — not fail outright.
+        // `.clo` (LaTeX class-option file) is now in the allowlist.
+        let zip = make_zip(&[
+            ("paper.tex", b"\\documentclass{article}"),
+            ("opts.clo", b"% class options"),
+            ("clip.mp4", b"\x00\x00\x00\x18ftyp"),
+        ]);
+        let out = unpack_into(&zip, tmp.path(), &cfg).unwrap();
+        assert_eq!(out.files_written, 2, "the two good files are written");
+        assert!(tmp.path().join("paper.tex").exists());
+        assert!(tmp.path().join("opts.clo").exists(), ".clo must be accepted");
+        assert!(!tmp.path().join("clip.mp4").exists(), ".mp4 must be dropped");
+        assert_eq!(out.skipped, vec!["clip.mp4".to_string()]);
+    }
+
+    #[test]
+    fn all_disallowed_archive_extracts_nothing_but_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_cfg();
+        let zip = make_zip(&[("evil.exe", b"MZ"), ("clip.mp4", b"\x00")]);
+        let out = unpack_into(&zip, tmp.path(), &cfg).unwrap();
+        assert_eq!(out.files_written, 0);
+        assert_eq!(out.skipped.len(), 2, "both bad files reported as skipped");
     }
 
     #[test]
