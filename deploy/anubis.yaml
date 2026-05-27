@@ -37,6 +37,19 @@ bots:
     path_regex: ^/(about|help|static/|favicon)
     action: ALLOW
 
+  # VS Code for the Web (/vscode) static assets: the vendored workbench
+  # build (/vscode-static/) and the ar5iv extension bundle (/vscode-ext/).
+  # Same zero engine/session cost as /static/, but they're also fetched
+  # from the per-webview subdomains (<hash>.latexml.rs) where the apex's
+  # Anubis clearance cookie does NOT apply and an iframe can't solve a JS
+  # challenge — so they MUST bypass it, or the workbench preview pane
+  # renders the Anubis page instead of the conversion. The /vscode entry
+  # page, /api/*, and /convert stay challenged (hit on the apex, where
+  # the cookie applies).
+  - name: vscode-assets
+    path_regex: ^/(vscode-static/|vscode-ext/)
+    action: ALLOW
+
   # Everything else — the editor surface (/editor), the API
   # (/api/*), and the WebSocket (/convert) — gets a JS challenge.
   # Browsers clear it once and keep a cookie; scripted clients
