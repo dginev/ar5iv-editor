@@ -402,6 +402,26 @@ echo "$EDITOR_HTML" | grep -q 'ar5iv' || die "/editor markup missing the ar5iv w
 echo "$EDITOR_HTML" | grep -q '/static/main.js' || die "/editor missing the main.js script tag"
 ok "/editor serves the wired shell"
 
+# /vscode must serve the real VS Code for the Web workbench, not the
+# launcher fallback. The workbench HTML carries the injected workbench
+# configuration meta tag and points its module loader at /vscode-static;
+# the launcher page has neither. This catches a release where the
+# vscode-web vendor step silently didn't make it into the image.
+VSCODE_HTML=$(curl -fsS "http://127.0.0.1:$SMOKE_PORT/vscode")
+echo "$VSCODE_HTML" | grep -q 'vscode-workbench-web-configuration' \
+    || die "/vscode served the launcher fallback (vscode-web not bundled?)"
+echo "$VSCODE_HTML" | grep -q '/vscode-static/out/' \
+    || die "/vscode workbench HTML missing the /vscode-static module loader"
+# Spot-check the static build + the ar5iv extension assets the workbench
+# fetches at boot — a 404 here means the COPY/ServeDir wiring is wrong.
+curl -fsS "http://127.0.0.1:$SMOKE_PORT/vscode-static/out/nls.messages.js" >/dev/null \
+    || die "/vscode-static/out/nls.messages.js missing (vscode-web/out not bundled)"
+curl -fsS "http://127.0.0.1:$SMOKE_PORT/vscode-ext/package.json" >/dev/null \
+    || die "/vscode-ext/package.json missing (vscode-extension not bundled)"
+curl -fsS "http://127.0.0.1:$SMOKE_PORT/vscode-ext/dist/web/extension.js" >/dev/null \
+    || die "/vscode-ext/dist/web/extension.js missing (extension web build not bundled)"
+ok "/vscode serves the workbench + static/ext assets"
+
 # Full lifecycle: mint a user, create a session, write a file, list it.
 # Catches binary-side regressions in the session manager + file panel
 # without touching the WebSocket convert path (which would need a WS

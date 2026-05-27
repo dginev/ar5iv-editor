@@ -29,6 +29,11 @@ services:
       AR5IV_EDITOR_BIND: "0.0.0.0:3000"
       AR5IV_EDITOR_STATIC_DIR: "/app/frontend/dist"
       AR5IV_EDITOR_SCHEMA_DOCS_DIR: "/app/schema-docs"
+      # VS Code for the Web assets for /vscode (bundled into the image by
+      # deploy/build-and-push.sh). These match the image's ENV defaults;
+      # listed here so the wiring is visible alongside the other paths.
+      AR5IV_VSCODE_WEB_DIR: "/app/vscode-web"
+      AR5IV_VSCODE_EXT_DIR: "/app/vscode-extension"
       AR5IV_EDITOR_SESSIONS_DIR: "/var/ar5iv-sessions"
       RUST_LOG: "info,ar5iv_editor=info"
       # Demo-tightened quotas — tighter than the library defaults

@@ -20,8 +20,9 @@
 # Override IMAGE / LATEXML_PATH / VALIDATOR_PATH / MATHML_SCHEMA_PATH
 # via env if your checkouts live somewhere other than the defaults.
 #
-# The published image contains only the compiled binary and the
-# frontend bundle — the multi-stage Dockerfile discards the
+# The published image contains only the compiled binary, the frontend
+# bundle, and the vendored VS Code Web workbench assets (vscode-web +
+# the ar5iv extension web bundle) — the multi-stage Dockerfile discards the
 # latexml-oxide source (and the Rust / npm build trees) before
 # the layers that `docker push` sends. We treat latexml-oxide as
 # private, so keep the ghcr.io package **private** too. ghcr.io
@@ -107,6 +108,10 @@ for junk in \
     "$CTX/ar5iv-editor/target"            \
     "$CTX/ar5iv-editor/frontend/node_modules" \
     "$CTX/ar5iv-editor/frontend/dist"     \
+    "$CTX/ar5iv-editor/vscode-extension/node_modules" \
+    "$CTX/ar5iv-editor/vscode-extension/dist" \
+    "$CTX/ar5iv-editor/vscode-extension/media" \
+    "$CTX/ar5iv-editor/vscode-web/ar5iv"  \
     "$CTX/latexml-oxide/target"           \
     "$CTX/validator/build"                \
     "$CTX/validator/jing-trang"           \
@@ -140,6 +145,43 @@ fi
 # `dist/` now lives at $CTX/ar5iv-editor/frontend/dist/ and the
 # Dockerfile COPYs it into the runtime stage. node_modules/ stays put;
 # BuildKit only walks paths referenced by COPY directives.
+
+# === VS Code for the Web (/vscode workbench) =========================
+# The /vscode route serves a vendored VS Code Web standalone build
+# (vscode-web/, ~150 MB of static out/ + builtin extensions/) with the
+# ar5iv extension loaded as a built-in (vscode-extension/, served at
+# /vscode-ext). Mirror the frontend prep: install the extension's deps,
+# vendor the standalone build, then bundle the extension's web + preview
+# assets. Order matters — `fetch:vscode-web` vendors the workbench
+# bootstrap (ar5iv/workbench.html + workbench-main.js) out of
+# node_modules/@vscode/test-web, so `npm ci` must run first.
+echo "==> [local prep] building VS Code Web workbench assets"
+(
+    cd "$CTX/ar5iv-editor/vscode-extension"
+    npm ci --no-audit --no-fund
+    # Idempotent: re-downloads the ~190 MB standalone build only on a
+    # cold cache or pin bump (the .ar5iv-vscode-web-version stamp gates
+    # it); otherwise just re-vendors the ar5iv/ bootstrap. Writes into
+    # ../vscode-web (resolved relative to the script, i.e. inside $CTX).
+    npm run fetch:vscode-web
+    # build:assets + build:desktop + build:web + build:preview →
+    # dist/{web,desktop}/extension.js + media/{preview.js,*.css}.
+    npm run build
+)
+# The /vscode route silently degrades to a launcher page when any of
+# these are absent, which would ship a dead workbench. Fail the build
+# here instead so a broken vendor step never reaches the image.
+for required in \
+    "$CTX/ar5iv-editor/vscode-web/ar5iv/workbench.html"        \
+    "$CTX/ar5iv-editor/vscode-web/out/nls.messages.js"         \
+    "$CTX/ar5iv-editor/vscode-extension/dist/web/extension.js" \
+    "$CTX/ar5iv-editor/vscode-extension/media/preview.js"      ; do
+    [[ -f "$required" ]] || { echo "error: missing $required after vscode build" >&2; exit 1; }
+done
+# We serve the standalone build as static files via the Rust server, so
+# its bundled Node server + deps are dead weight in the image — drop
+# them (the cold-fetch path extracts a node_modules/ from the tarball).
+rm -rf "$CTX/ar5iv-editor/vscode-web/node_modules"
 
 # === Schema documentation ============================================
 echo "==> [local prep] generating schema documentation"

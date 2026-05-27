@@ -5,14 +5,17 @@
 #
 #   <ctx>/
 #   ├── ar5iv-editor/                       # this repo
-#   │   └── frontend/dist/                  # vite output (built locally)
+#   │   ├── frontend/dist/                  # vite output (built locally)
+#   │   ├── vscode-web/                     # vendored VS Code Web build (/vscode)
+#   │   └── vscode-extension/{dist,media}/  # ar5iv extension web bundle (/vscode-ext)
 #   ├── latexml-oxide/                      # path-dep, https://github.com/dginev/latexml-oxide
 #   ├── validator/                          # ltx-scholarly schema source
 #   ├── mathml-schema/                      # mathml4-core schema source
 #   └── schema-docs/{latexml,scholarly,mathml-core}/
 #                                           # generated schema-doc sites
 #
-# Both `frontend/dist/` and `schema-docs/` are produced on the host by
+# `frontend/dist/`, `schema-docs/`, and the `vscode-web/` +
+# `vscode-extension/` web bundles are all produced on the host by
 # `deploy/build-and-push.sh` before the docker build kicks off. They
 # are pure browser content (HTML/CSS/JS) with no platform tie, so
 # generating them locally avoids dragging trang + Java + Node into
@@ -228,9 +231,24 @@ COPY --from=formats /build/latexml-oxide/resources/dumps             /app/dumps
 COPY ar5iv-editor/frontend/dist /app/frontend/dist
 COPY schema-docs                /app/schema-docs
 
+# VS Code for the Web assets for the `/vscode` workbench. `vscode-web` is
+# the vendored standalone build (static `out/` + builtin `extensions/`),
+# served at /vscode-static. The pruned extension dir (manifest + web
+# bundle + preview media) is served at /vscode-ext and loaded as a
+# built-in. Both are produced by `build-and-push.sh`'s [local prep] step
+# (npm ci → fetch:vscode-web → build). Without them the /vscode route
+# degrades to a launcher page.
+COPY ar5iv-editor/vscode-web                         /app/vscode-web
+COPY ar5iv-editor/vscode-extension/package.json      /app/vscode-extension/package.json
+COPY ar5iv-editor/vscode-extension/package.nls.json  /app/vscode-extension/package.nls.json
+COPY ar5iv-editor/vscode-extension/dist              /app/vscode-extension/dist
+COPY ar5iv-editor/vscode-extension/media             /app/vscode-extension/media
+
 ENV AR5IV_EDITOR_BIND="0.0.0.0:3000" \
     AR5IV_EDITOR_STATIC_DIR="/app/frontend/dist" \
     AR5IV_EDITOR_SCHEMA_DOCS_DIR="/app/schema-docs" \
+    AR5IV_VSCODE_WEB_DIR="/app/vscode-web" \
+    AR5IV_VSCODE_EXT_DIR="/app/vscode-extension" \
     LATEXML_DUMP_DIR="/app/dumps"
 
 # `nobody` has UID 65534 — works on every Linux distro out of the
