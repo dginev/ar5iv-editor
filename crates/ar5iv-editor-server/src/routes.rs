@@ -92,7 +92,15 @@ el.setAttribute('data-settings',JSON.stringify(c));}}catch(e){}})();</script>";
 fn workbench_config_json(scheme: &str, authority: &str, origin: &str) -> String {
     serde_json::json!({
         "additionalBuiltinExtensions": [
-            { "scheme": scheme, "authority": authority, "path": "/vscode-ext" }
+            { "scheme": scheme, "authority": authority, "path": "/vscode-ext" },
+            // The vendored VS Code `latex` builtin (TextMate grammars for
+            // tex/latex/bibtex, served from the standalone build under
+            // /vscode-static/extensions/latex). It's declarative — no code
+            // entry point — so it runs in the web extension host. We load it
+            // explicitly because the workbench is bootstrapped with
+            // builtinExtensions=[], so without this .tex files get no syntax
+            // highlighting.
+            { "scheme": scheme, "authority": authority, "path": "/vscode-static/extensions/latex" }
         ],
         "productConfiguration": {
             "nameShort": "ar5iv Code",
