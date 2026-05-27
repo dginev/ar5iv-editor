@@ -89,9 +89,21 @@ export interface WebSocketConstructor {
   new(url: string): WebSocketLike;
 }
 
+// Subset of the Fetch `credentials` mode, declared locally so the shared
+// module stays free of a DOM-lib dependency (it's compiled for both the
+// browser web-extension host and the Node desktop host).
+export type FetchCredentials = "include" | "omit" | "same-origin";
+
 export interface HostedProviderOptions {
   readonly backendUrl: string;
   readonly webSocket: WebSocketConstructor;
+  // Cross-origin credentials mode for backend fetches. Only the hosted web
+  // showcase needs "include": its webview extension-host worker runs on a
+  // per-webview subdomain and must send the apex's Anubis clearance cookie so
+  // the cross-origin /api calls clear the bot-wall. The desktop adapter leaves
+  // this unset — its managed server is local (no Anubis, no cookies) and the
+  // Node host has no CORS anyway, so credentials are inert there.
+  readonly credentials?: FetchCredentials;
   getUserId(): Promise<string | undefined>;
   setUserId(value: string): Promise<void>;
 }
@@ -110,7 +122,14 @@ export class HostedBackendProvider implements ConversionProvider {
       this.callJson<SessionEnvelope>("/api/session", { method: "POST", body: JSON.stringify({ slot: "blank" }) }, userId),
       this.fetchConverterVersion(),
     ]);
-    return new HostedConversionSession(this.baseUrl, this.options.webSocket, userId, session, converter);
+    return new HostedConversionSession(
+      this.baseUrl,
+      this.options.webSocket,
+      userId,
+      session,
+      converter,
+      this.options.credentials,
+    );
   }
 
   async dispose(): Promise<void> {}
@@ -119,7 +138,7 @@ export class HostedBackendProvider implements ConversionProvider {
    *  non-fatal: conversion still works without the version label. */
   private async fetchConverterVersion(): Promise<ConverterVersion | undefined> {
     try {
-      const response = await fetch(this.httpUrl("/api/version"));
+      const response = await fetch(this.httpUrl("/api/version"), { credentials: this.options.credentials });
       if (!response.ok) return undefined;
       const body = (await response.json()) as VersionInfo;
       return {
@@ -136,7 +155,7 @@ export class HostedBackendProvider implements ConversionProvider {
   private async ensureUserId(): Promise<string> {
     const cached = await this.options.getUserId();
     if (cached) return cached;
-    const response = await fetch(this.httpUrl("/api/user"), { method: "POST" });
+    const response = await fetch(this.httpUrl("/api/user"), { method: "POST", credentials: this.options.credentials });
     if (!response.ok) {
       throw new Error(`POST /api/user failed: ${response.status} ${await response.text()}`);
     }
@@ -151,7 +170,7 @@ export class HostedBackendProvider implements ConversionProvider {
     if (init.body && !headers.has("content-type")) {
       headers.set("content-type", "application/json");
     }
-    const response = await fetch(this.httpUrl(path), { ...init, headers });
+    const response = await fetch(this.httpUrl(path), { ...init, headers, credentials: this.options.credentials });
     if (!response.ok) {
       throw new Error(`${init.method ?? "GET"} ${path} failed: ${response.status} ${await response.text()}`);
     }
@@ -170,6 +189,7 @@ class HostedConversionSession implements ConversionSession {
     private readonly userId: string,
     private readonly session: SessionEnvelope,
     private readonly converter: ConverterVersion | undefined,
+    private readonly credentials: FetchCredentials | undefined,
   ) {}
 
   async convert(request: NormalizedConvertRequest): Promise<NormalizedConvertResponse> {
@@ -210,6 +230,7 @@ class HostedConversionSession implements ConversionSession {
         "content-type": "application/octet-stream",
       },
       body: text,
+      credentials: this.credentials,
     });
     if (!response.ok) {
       throw new Error(`PUT ${path} failed: ${response.status} ${await response.text()}`);

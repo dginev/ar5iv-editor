@@ -110,7 +110,6 @@ for junk in \
     "$CTX/ar5iv-editor/frontend/dist"     \
     "$CTX/ar5iv-editor/vscode-extension/node_modules" \
     "$CTX/ar5iv-editor/vscode-extension/dist" \
-    "$CTX/ar5iv-editor/vscode-extension/media" \
     "$CTX/ar5iv-editor/vscode-web/ar5iv"  \
     "$CTX/latexml-oxide/target"           \
     "$CTX/validator/build"                \
@@ -171,17 +170,27 @@ echo "==> [local prep] building VS Code Web workbench assets"
 # The /vscode route silently degrades to a launcher page when any of
 # these are absent, which would ship a dead workbench. Fail the build
 # here instead so a broken vendor step never reaches the image.
+#
+# NOTE: `vscode-web/node_modules` is NOT a discardable "bundled server" —
+# the workbench fetches its tokenizer + telemetry runtime from there at
+# load time (`/vscode-static/node_modules/vscode-oniguruma/release/onig.wasm`,
+# `vscode-textmate`, `tas-client`, `@vscode/vscode-languagedetection`).
+# Stripping it breaks syntax highlighting and spams 404s. Likewise
+# `vscode-extension/media/preview.css` is a *tracked source* file (only
+# preview.js is generated), so `media/` must not be stripped before the
+# build. Both are asserted below so a future prune can't silently
+# reintroduce the regression.
 for required in \
-    "$CTX/ar5iv-editor/vscode-web/ar5iv/workbench.html"        \
-    "$CTX/ar5iv-editor/vscode-web/out/nls.messages.js"         \
-    "$CTX/ar5iv-editor/vscode-extension/dist/web/extension.js" \
-    "$CTX/ar5iv-editor/vscode-extension/media/preview.js"      ; do
+    "$CTX/ar5iv-editor/vscode-web/ar5iv/workbench.html"                                  \
+    "$CTX/ar5iv-editor/vscode-web/out/nls.messages.js"                                   \
+    "$CTX/ar5iv-editor/vscode-web/node_modules/vscode-oniguruma/release/onig.wasm"       \
+    "$CTX/ar5iv-editor/vscode-web/node_modules/vscode-textmate/release/main.js"          \
+    "$CTX/ar5iv-editor/vscode-web/extensions/latex/syntaxes/LaTeX.tmLanguage.json"       \
+    "$CTX/ar5iv-editor/vscode-extension/dist/web/extension.js"                           \
+    "$CTX/ar5iv-editor/vscode-extension/media/preview.js"                                \
+    "$CTX/ar5iv-editor/vscode-extension/media/preview.css"                               ; do
     [[ -f "$required" ]] || { echo "error: missing $required after vscode build" >&2; exit 1; }
 done
-# We serve the standalone build as static files via the Rust server, so
-# its bundled Node server + deps are dead weight in the image — drop
-# them (the cold-fetch path extracts a node_modules/ from the tarball).
-rm -rf "$CTX/ar5iv-editor/vscode-web/node_modules"
 
 # === Schema documentation ============================================
 echo "==> [local prep] generating schema documentation"

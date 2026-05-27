@@ -50,6 +50,21 @@ bots:
     path_regex: ^/(vscode-static/|vscode-ext/)
     action: ALLOW
 
+  # CORS preflights. The hosted /vscode webview's extension-host worker runs on
+  # a per-webview subdomain and calls the apex /api (+ /convert) cross-origin;
+  # the browser fires an uncredentialed OPTIONS preflight first, which carries
+  # no cookie and would otherwise hit the challenge — failing the whole request
+  # with a CORS error. A preflight is side-effect-free by spec (the server only
+  # echoes CORS headers, no engine work), so allowing it exposes nothing: the
+  # *actual* /api + /convert requests are credentialed and still require the
+  # solved-challenge cookie. Matched by the presence of the preflight-only
+  # `Access-Control-Request-Method` header; `.+` (not `.*`) so a request lacking
+  # the header can never match, even if Anubis treats it as empty.
+  - name: cors-preflight
+    headers_regex:
+      Access-Control-Request-Method: .+
+    action: ALLOW
+
   # Everything else — the editor surface (/editor), the API
   # (/api/*), and the WebSocket (/convert) — gets a JS challenge.
   # Browsers clear it once and keep a cookie; scripted clients

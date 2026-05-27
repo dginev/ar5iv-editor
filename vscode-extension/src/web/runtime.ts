@@ -16,6 +16,11 @@ export async function createRuntimeServices(context: vscode.ExtensionContext): P
       return new HostedBackendProvider({
         backendUrl,
         webSocket: WebSocket as unknown as WebSocketConstructor,
+        // Hosted showcase only: the webview extension-host worker runs on a
+        // per-webview subdomain and calls the apex backend cross-origin, so it
+        // must send the Anubis clearance cookie to clear the bot-wall. (Desktop
+        // leaves this unset — local managed server, no Anubis.)
+        credentials: "include",
         getUserId: async () => context.globalState.get<string>("ar5iv.userId"),
         setUserId: async (value) => {
           await context.globalState.update("ar5iv.userId", value);

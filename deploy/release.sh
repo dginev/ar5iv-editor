@@ -416,11 +416,22 @@ echo "$VSCODE_HTML" | grep -q '/vscode-static/out/' \
 # fetches at boot — a 404 here means the COPY/ServeDir wiring is wrong.
 curl -fsS "http://127.0.0.1:$SMOKE_PORT/vscode-static/out/nls.messages.js" >/dev/null \
     || die "/vscode-static/out/nls.messages.js missing (vscode-web/out not bundled)"
+# The workbench fetches its tokenizer runtime from vscode-web/node_modules at
+# load time; without it there's no syntax highlighting (and a wall of 404s).
+curl -fsS "http://127.0.0.1:$SMOKE_PORT/vscode-static/node_modules/vscode-oniguruma/release/onig.wasm" >/dev/null \
+    || die "/vscode-static/node_modules/vscode-oniguruma/release/onig.wasm missing (vscode-web/node_modules stripped?)"
+# The LaTeX grammar (loaded as a builtin via additionalBuiltinExtensions).
+curl -fsS "http://127.0.0.1:$SMOKE_PORT/vscode-static/extensions/latex/syntaxes/LaTeX.tmLanguage.json" >/dev/null \
+    || die "/vscode-static/extensions/latex grammar missing (no .tex highlighting)"
 curl -fsS "http://127.0.0.1:$SMOKE_PORT/vscode-ext/package.json" >/dev/null \
     || die "/vscode-ext/package.json missing (vscode-extension not bundled)"
 curl -fsS "http://127.0.0.1:$SMOKE_PORT/vscode-ext/dist/web/extension.js" >/dev/null \
     || die "/vscode-ext/dist/web/extension.js missing (extension web build not bundled)"
-ok "/vscode serves the workbench + static/ext assets"
+# preview.css is a tracked source file in media/ (only preview.js is generated);
+# the webview 404s on it if media/ was stripped before the build.
+curl -fsS "http://127.0.0.1:$SMOKE_PORT/vscode-ext/media/preview.css" >/dev/null \
+    || die "/vscode-ext/media/preview.css missing (media/ stripped before build?)"
+ok "/vscode serves the workbench + static/ext assets (incl. tokenizer + latex grammar)"
 
 # Full lifecycle: mint a user, create a session, write a file, list it.
 # Catches binary-side regressions in the session manager + file panel
