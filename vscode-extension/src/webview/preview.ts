@@ -264,6 +264,14 @@ window.addEventListener("message", (event) => {
 
   if (message.type === "pending") {
     titleEl.textContent = message.request.activeFile || "ar5iv Preview";
+    // On a document switch, wipe the previous article's render immediately so
+    // the stale preview doesn't linger until the new conversion lands. Same-
+    // document reconverts (edits) keep the current render to avoid per-keystroke
+    // flicker — so only clear when the active document actually changed.
+    if (latest && latest.request.activeUri !== message.request.activeUri) {
+      latest = null;
+      preview.showEmptyState("Converting…");
+    }
     setBusy(true);
     startTicker();
     return;
