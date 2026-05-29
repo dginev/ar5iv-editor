@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Upload &mdash; ar5iv Editor{% endblock %}
+{% block main %}
+<section class="upload-page">
+  <div class="upload-intro">
+    <h1>Convert a LaTeX archive</h1>
+    <p class="lede">Upload a self-sufficient LaTeX archive (ZIP, tar.gz, .tgz, or .gz; up to 25&nbsp;MB) and download the rendered ar5iv HTML5 as a self-contained ZIP &mdash; open <code>index.html</code> to view it offline.</p>
+    <form id="upload-form" class="upload-form">
+      <label id="drop-zone" class="upload-drop" for="upload-input" tabindex="0">
+        <span class="upload-drop__primary">Choose a LaTeX archive</span>
+        <span class="upload-drop__hint">or drag and drop a .zip, .tar.gz, .tgz, or .gz here</span>
+        <input id="upload-input" type="file" accept=".zip,.tgz,.gz,.tar.gz,application/zip,application/gzip" class="upload-input" />
+      </label>
+    </form>
+    <div class="upload-status" id="upload-status" aria-live="polite">
+      <span class="caption">Status</span>
+      <span id="status">ready</span>
+    </div>
+  </div>
+  <pre id="log" class="log" hidden></pre>
+</section>
+{% endblock %}
+{% block scripts %}
+<script type="module" src="/static/upload.js"></script>
+{% endblock %}

@@ -117,7 +117,7 @@ cargo run -p ar5iv-editor-server
 ```
 
 **Frontend** (Vite dev server on port 5173, proxies `/convert`, `/about`,
-`/help`, `/editor`, `/static` to the backend):
+`/help`, `/editor`, `/upload`, `/api`, `/static` to the backend):
 
 ```sh
 cd frontend
@@ -125,7 +125,10 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:5173/editor>.
+Open <http://localhost:5173/editor>. `GET /upload` is a standalone, no-preview
+archive converter: pick or drag a single self-sufficient LaTeX archive (`.zip`,
+`.tar.gz`, `.tgz`, or a bare `.gz`) and the converted ar5iv HTML5 is packaged as
+a self-contained ZIP (`index.html` + ar5iv CSS + sources) and auto-downloaded.
 
 ## VS Code extension local test
 

@@ -11,7 +11,10 @@ use ar5iv_editor_protocol::{LatexmlOxideVersion, VersionInfo};
 use crate::{
     AppState,
     error::AppError,
-    templates::{AboutTemplate, EditorTemplate, HelpTemplate, SchemasTemplate, VscodeTemplate},
+    templates::{
+        AboutTemplate, EditorTemplate, HelpTemplate, SchemasTemplate, UploadTemplate,
+        VscodeTemplate,
+    },
 };
 
 /// Captured at build time from `build.rs`. Format: short SHA.
@@ -29,6 +32,14 @@ pub async fn root_redirect() -> Redirect {
 
 pub async fn editor() -> Result<Response, AppError> {
     Ok(render_html(StatusCode::OK, EditorTemplate.render()?))
+}
+
+/// `GET /upload` — a standalone archive-drop page: pick or drag a single
+/// self-sufficient LaTeX ZIP archive and see the converted ar5iv HTML5 rendered
+/// inline. It rides the same `/api/import-archive` + `/convert` pipeline as the
+/// editor, reusing the shared `frontend-core/` preview to render the result.
+pub async fn upload() -> Result<Response, AppError> {
+    Ok(render_html(StatusCode::OK, UploadTemplate.render()?))
 }
 
 /// `GET /vscode` — the self-hosted VS Code for the Web workbench, bootstrapped

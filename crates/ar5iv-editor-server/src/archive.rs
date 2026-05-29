@@ -1,7 +1,8 @@
-//! Archive import (ZIP + tar.gz) and ZIP export.
+//! Archive import (ZIP + gzip: `.tar.gz`/`.tgz` and single-file `.gz`)
+//! and ZIP export.
 //!
-//! Both formats are unpacked through a single set of validation and
-//! quota chokepoints; the only difference is the iterator. See
+//! Every input is unpacked through a single set of validation and quota
+//! chokepoints; the only difference is how entries are enumerated. See
 //! `docs/FileUI.md` "Archive upload — ZIP and tar.gz".
 
 use std::collections::HashSet;
@@ -23,7 +24,10 @@ use crate::error::AppError;
 #[derive(Debug, Clone, Copy)]
 pub enum ArchiveFormat {
     Zip,
-    TarGz,
+    /// A gzip stream — either a gzipped tar (`.tar.gz` / `.tgz`) or a
+    /// single gzipped file (`.gz`). Both carry the same `1f 8b` magic;
+    /// which one it is is decided after decompression by [`collect_gzip`].
+    Gzip,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -54,10 +58,10 @@ pub fn sniff_format(bytes: &[u8]) -> Result<ArchiveFormat, AppError> {
     if bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"PK\x05\x06") {
         Ok(ArchiveFormat::Zip)
     } else if bytes.starts_with(&[0x1f, 0x8b]) {
-        Ok(ArchiveFormat::TarGz)
+        Ok(ArchiveFormat::Gzip)
     } else {
         Err(AppError::bad_request(
-            "archive: unrecognised format (expected ZIP or tar.gz)",
+            "archive: unrecognised format (expected ZIP, tar.gz, or .gz)",
         ))
     }
 }
@@ -277,7 +281,7 @@ fn build_plan(
 
     let raw_entries: Vec<RawEntry> = match format {
         ArchiveFormat::Zip => collect_zip(bytes)?,
-        ArchiveFormat::TarGz => collect_tar_gz(bytes, cfg)?,
+        ArchiveFormat::Gzip => collect_gzip(bytes, cfg)?,
     };
 
     if raw_entries.len() > MAX_ENTRIES {
@@ -419,17 +423,90 @@ fn collect_zip(bytes: &[u8]) -> Result<Vec<RawEntry>, AppError> {
     Ok(out)
 }
 
-fn collect_tar_gz(bytes: &[u8], cfg: &SessionConfig) -> Result<Vec<RawEntry>, AppError> {
+/// Decompress a gzip stream and dispatch: a gzipped tar (`.tar.gz` /
+/// `.tgz`) is parsed entry-by-entry; a single gzipped file (`.gz`, e.g.
+/// an arXiv bare-TeX submission) becomes one entry. The two are
+/// indistinguishable by magic (both `1f 8b`), so we decide after
+/// decompression via the tar `ustar` marker.
+fn collect_gzip(bytes: &[u8], cfg: &SessionConfig) -> Result<Vec<RawEntry>, AppError> {
+    // Decompress fully into memory, bounded by a post-decompress cap so a
+    // gzip-bomb (innocent compressed size, huge expansion) can't OOM us —
+    // the same defence the streaming reader gave us before.
+    let max_uncompressed = cfg.quota_session_bytes.saturating_mul(2);
+    let mut decompressed: Vec<u8> = Vec::new();
+    {
+        let gz = flate2::read::GzDecoder::new(Cursor::new(bytes));
+        LimitReader::new(gz, max_uncompressed)
+            .read_to_end(&mut decompressed)
+            .map_err(|e| AppError::bad_request(format!("gzip: decompress: {e}")))?;
+    }
+
+    if looks_like_tar(&decompressed) {
+        return collect_tar(&decompressed, cfg);
+    }
+
+    // Single gzipped file. Prefer the original name from the gzip FNAME
+    // header (basename only, to neutralise an embedded path); otherwise
+    // assume a bare TeX submission — arXiv's convention for a single
+    // gzipped source — and call it `main.tex`. The extension allowlist
+    // and path normalisation downstream still apply.
+    let name = gzip_original_filename(bytes)
+        .and_then(|n| Path::new(&n).file_name().map(|s| s.to_string_lossy().into_owned()))
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "main.tex".to_string());
+    Ok(vec![RawEntry { name, bytes: decompressed, kind: EntryKind::File }])
+}
+
+/// True if the decompressed bytes look like a POSIX/GNU tar: the `ustar`
+/// magic sits at offset 257 of the first 512-byte header block. A single
+/// gzipped file (a lone `.tex`, say) won't carry it — that's how we tell
+/// `.tar.gz` from a bare `.gz`. Pre-POSIX v7 tar lacks the marker and
+/// would be treated as a single file, but that format is effectively
+/// extinct for the arXiv-style sources we ingest.
+fn looks_like_tar(decompressed: &[u8]) -> bool {
+    decompressed.len() >= 262 && &decompressed[257..262] == b"ustar"
+}
+
+/// The original filename stored in a gzip header (RFC 1952 FNAME field),
+/// if present. We parse the raw header rather than the decoder so we
+/// don't have to thread the decoder past the bounded read above. Returns
+/// the stored string verbatim; the caller takes the basename.
+fn gzip_original_filename(bytes: &[u8]) -> Option<String> {
+    // Fixed 10-byte header: magic(2) CM(1) FLG(1) MTIME(4) XFL(1) OS(1).
+    if bytes.len() < 10 || bytes[0] != 0x1f || bytes[1] != 0x8b {
+        return None;
+    }
+    const FEXTRA: u8 = 0x04;
+    const FNAME: u8 = 0x08;
+    let flg = bytes[3];
+    if flg & FNAME == 0 {
+        return None;
+    }
+    let mut pos = 10usize;
+    if flg & FEXTRA != 0 {
+        // XLEN (2 bytes, little-endian) then that many extra-field bytes.
+        let xlen = u16::from_le_bytes([*bytes.get(pos)?, *bytes.get(pos + 1)?]) as usize;
+        pos = pos.checked_add(2)?.checked_add(xlen)?;
+    }
+    // FNAME is a NUL-terminated string. Be lenient: accept valid UTF-8,
+    // ignore an unterminated / non-UTF-8 field rather than erroring.
+    let start = pos;
+    while pos < bytes.len() && bytes[pos] != 0 {
+        pos += 1;
+    }
+    if pos >= bytes.len() {
+        return None;
+    }
+    std::str::from_utf8(&bytes[start..pos]).ok().map(|s| s.to_string())
+}
+
+/// Parse an already-decompressed tar byte stream into raw entries.
+/// Per-file size caps are enforced here; the post-decompress total cap
+/// lives upstream in [`collect_gzip`].
+fn collect_tar(decompressed: &[u8], cfg: &SessionConfig) -> Result<Vec<RawEntry>, AppError> {
     use tar::EntryType;
 
-    let cursor = Cursor::new(bytes);
-    let gz = flate2::read::GzDecoder::new(cursor);
-    // Wrap in a counting reader so we can enforce a *post-decompress*
-    // size cap. Defeats gzip-bombs that report an innocent compressed
-    // size on the wire but expand to huge content.
-    let max_uncompressed = cfg.quota_session_bytes.saturating_mul(2);
-    let mut counted = LimitReader::new(gz, max_uncompressed);
-    let mut archive = tar::Archive::new(&mut counted);
+    let mut archive = tar::Archive::new(Cursor::new(decompressed));
 
     let mut out: Vec<RawEntry> = Vec::new();
     let entries = archive
@@ -618,9 +695,13 @@ fn walk_for_export(
             .file_type()
             .map_err(|e| AppError::internal(format!("walk file_type: {e}")))?;
         let p = entry.path();
-        // Skip any leftover staging directories.
+        // Skip internal scratch: leftover overlay staging dirs, and the
+        // converter's post-processing destination file (`convert.rs`
+        // points the HTML5 post-processor at `<session>/__preview.html`).
+        // Neither belongs in a user-facing export — the self-contained
+        // `index.html` we synthesise is the rendered artifact.
         let leaf_str = entry.file_name().to_string_lossy().into_owned();
-        if leaf_str.starts_with(".staging-") {
+        if leaf_str.starts_with(".staging-") || leaf_str == "__preview.html" {
             continue;
         }
         if ft.is_dir() {
@@ -696,13 +777,79 @@ mod tests {
         gz_buf
     }
 
+    fn make_bare_gz(filename: Option<&str>, body: &[u8]) -> Vec<u8> {
+        let mut builder = flate2::GzBuilder::new();
+        if let Some(name) = filename {
+            builder = builder.filename(name.as_bytes());
+        }
+        let mut enc = builder.write(Vec::new(), flate2::Compression::default());
+        enc.write_all(body).unwrap();
+        enc.finish().unwrap()
+    }
+
     #[test]
     fn sniff_distinguishes_formats() {
         let zip = make_zip(&[("a.tex", b"hi")]);
         let tar = make_tar_gz(&[("a.tex", b"hi")]);
+        let gz = make_bare_gz(Some("a.tex"), b"hi");
         assert!(matches!(sniff_format(&zip).unwrap(), ArchiveFormat::Zip));
-        assert!(matches!(sniff_format(&tar).unwrap(), ArchiveFormat::TarGz));
+        // Both gzipped tar and bare gzip sniff as Gzip — they share the magic.
+        assert!(matches!(sniff_format(&tar).unwrap(), ArchiveFormat::Gzip));
+        assert!(matches!(sniff_format(&gz).unwrap(), ArchiveFormat::Gzip));
         assert!(sniff_format(b"plain text").is_err());
+    }
+
+    #[test]
+    fn unpack_bare_gz_uses_gzip_header_filename() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_cfg();
+        let gz = make_bare_gz(Some("paper.tex"), b"\\documentclass{article}");
+        let outcome = unpack_into(&gz, tmp.path(), &cfg).unwrap();
+        assert_eq!(outcome.files_written, 1);
+        assert_eq!(outcome.paths, vec!["paper.tex".to_string()]);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("paper.tex")).unwrap(),
+            "\\documentclass{article}"
+        );
+    }
+
+    #[test]
+    fn unpack_bare_gz_without_name_defaults_to_main_tex() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_cfg();
+        // No FNAME header → arXiv bare-TeX convention → main.tex.
+        let gz = make_bare_gz(None, b"\\section{x}");
+        let outcome = unpack_into(&gz, tmp.path(), &cfg).unwrap();
+        assert_eq!(outcome.paths, vec!["main.tex".to_string()]);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("main.tex")).unwrap(),
+            "\\section{x}"
+        );
+    }
+
+    #[test]
+    fn bare_gz_header_path_is_reduced_to_basename() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_cfg();
+        // A hostile FNAME with a directory/traversal component must not
+        // escape — we take only the basename.
+        let gz = make_bare_gz(Some("../../etc/main.tex"), b"safe");
+        let outcome = unpack_into(&gz, tmp.path(), &cfg).unwrap();
+        assert_eq!(outcome.paths, vec!["main.tex".to_string()]);
+        assert!(tmp.path().join("main.tex").exists());
+    }
+
+    #[test]
+    fn tar_gz_still_unpacks_as_tar_not_single_file() {
+        // Guard the tar-vs-single-file discriminator: a real multi-entry
+        // tar.gz must still enumerate its entries, not collapse to one.
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_cfg();
+        let tg = make_tar_gz(&[("main.tex", b"a"), ("sub/fig.svg", b"<svg/>")]);
+        let outcome = unpack_into(&tg, tmp.path(), &cfg).unwrap();
+        assert_eq!(outcome.files_written, 2);
+        assert!(tmp.path().join("main.tex").exists());
+        assert!(tmp.path().join("sub/fig.svg").exists());
     }
 
     #[test]
@@ -853,6 +1000,29 @@ mod tests {
         assert_eq!(outcome.files_written, 2);
         assert_eq!(std::fs::read_to_string(dst.path().join("a.tex")).unwrap(), "alpha");
         assert_eq!(std::fs::read_to_string(dst.path().join("sub/b.tex")).unwrap(), "beta");
+    }
+
+    #[test]
+    fn export_excludes_converter_scratch_preview_html() {
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("main.tex"), b"hi").unwrap();
+        // The HTML5 post-processor's destination file the converter leaves
+        // behind in the session dir — must not leak into a user export.
+        std::fs::write(src.path().join("__preview.html"), b"<html>scratch</html>").unwrap();
+
+        let mut buf: Vec<u8> = Vec::new();
+        let mut cursor = std::io::Cursor::new(&mut buf);
+        export_zip(src.path(), &mut cursor, &[]).unwrap();
+        drop(cursor);
+
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&buf)).unwrap();
+        let names: Vec<String> =
+            (0..zip.len()).map(|i| zip.by_index(i).unwrap().name().to_string()).collect();
+        assert!(names.contains(&"main.tex".to_string()), "source kept: {names:?}");
+        assert!(
+            !names.iter().any(|n| n == "__preview.html"),
+            "converter scratch must be excluded: {names:?}"
+        );
     }
 
     #[test]

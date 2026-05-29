@@ -641,7 +641,7 @@ fn build_export_extras(
         return Vec::new();
     };
     let rewritten = rewrite_for_offline(&fragment, session_id);
-    let index_html = wrap_offline_html(&rewritten);
+    let index_html = build_offline_index(&rewritten);
     vec![
         ("index.html".to_string(), index_html.into_bytes()),
         ("css/ar5iv.css".to_string(), AR5IV_CSS.to_vec()),
@@ -658,10 +658,43 @@ fn rewrite_for_offline(html: &str, session_id: &str) -> String {
     html.replace(&needle, "")
 }
 
-/// Wrap a rendered fragment in a minimal HTML5 shell that links the
+/// The ar5iv stylesheet `<link>`s the export bundle ships, injected so
+/// the page renders offline against the sibling `css/` directory.
+const OFFLINE_CSS_LINKS: &str = "<link rel=\"stylesheet\" href=\"css/ar5iv-fonts.css\">\n\
+<link rel=\"stylesheet\" href=\"css/ar5iv.css\">\n";
+
+/// Turn the cached conversion HTML into the standalone `index.html`.
+///
+/// latexml-oxide's HTML5 output is already a *complete* document — its
+/// own `<head>` (carrying the `\title`-derived `<title>`), the
+/// `ltx_page_main` body, the lot — but it embeds no stylesheet links
+/// (the live preview injects those into its shadow root itself). So we
+/// keep that document intact, preserving latexml's `<title>`, and splice
+/// the bundled ar5iv stylesheet links in just before `</head>`. Wrapping
+/// it in a second shell (as we used to) produced nested `<html>`/`<head>`
+/// and a hardcoded `<title>ar5iv export</title>` that shadowed the real
+/// one. If we're ever handed a bare fragment instead (no `</head>`), fall
+/// back to the minimal wrapper.
+fn build_offline_index(html: &str) -> String {
+    // First `</head>` is the document head's — body content never precedes
+    // it, so this targets latexml's `<head>` even if a verbatim block later
+    // contains the literal text.
+    if let Some(head_end) = html.find("</head>") {
+        let mut out = String::with_capacity(html.len() + OFFLINE_CSS_LINKS.len());
+        out.push_str(&html[..head_end]);
+        out.push_str(OFFLINE_CSS_LINKS);
+        out.push_str(&html[head_end..]);
+        out
+    } else {
+        wrap_offline_html(html)
+    }
+}
+
+/// Wrap a rendered *fragment* in a minimal HTML5 shell that links the
 /// ar5iv stylesheets we ship alongside it. Mirrors the live preview's
-/// shadow-root setup (`<div class="ltx_page_main">…</div>`) so the
-/// same selectors apply.
+/// shadow-root setup (`<div class="ltx_page_main">…</div>`) so the same
+/// selectors apply. Fallback for [`build_offline_index`] when the
+/// conversion output isn't a complete document.
 fn wrap_offline_html(fragment: &str) -> String {
     format!(
         "<!DOCTYPE html>\n\
@@ -1010,5 +1043,36 @@ fn map_io_err_with(session: &Session) -> impl Fn(std::io::Error) -> AppError + '
             return AppError::bad_request(format!("not found: {e}"));
         }
         AppError::internal(format!("io: {e}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offline_index_preserves_latexml_title_and_injects_css() {
+        // latexml-oxide hands us a complete HTML document with its own
+        // <head>/<title>; the export must keep that title and only add the
+        // bundled stylesheet links — not wrap it in a second shell.
+        let doc = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n\
+<title>My Paper Title</title>\n</head>\n<body>\n\
+<div class=\"ltx_page_main\">body</div>\n</body>\n</html>\n";
+        let out = build_offline_index(doc);
+        assert!(out.contains("<title>My Paper Title</title>"), "latexml title kept: {out}");
+        assert!(!out.contains("ar5iv export"), "no hardcoded title override");
+        assert!(out.contains("css/ar5iv.css"), "ar5iv css link injected");
+        assert_eq!(out.matches("<head>").count(), 1, "exactly one <head> (no double-wrap)");
+        assert_eq!(out.matches("<title>").count(), 1, "exactly one <title>");
+    }
+
+    #[test]
+    fn offline_index_wraps_bare_fragment() {
+        // No </head> → fall back to the minimal shell.
+        let frag = "<div class=\"ltx_para\">just a fragment</div>";
+        let out = build_offline_index(frag);
+        assert!(out.contains("just a fragment"));
+        assert!(out.contains("css/ar5iv.css"), "css linked in fallback shell");
+        assert!(out.contains("<head>"), "fallback adds a head");
     }
 }

@@ -5,6 +5,10 @@ use askama::Template;
 pub struct EditorTemplate;
 
 #[derive(Template)]
+#[template(path = "upload.html")]
+pub struct UploadTemplate;
+
+#[derive(Template)]
 #[template(path = "vscode.html")]
 pub struct VscodeTemplate;
 

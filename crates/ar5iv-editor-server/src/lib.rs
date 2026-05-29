@@ -45,6 +45,7 @@ pub fn router(state: AppState) -> Router {
         .route("/schemas", get(routes::schemas))
         .route("/help", get(routes::help))
         .route("/editor", get(routes::editor))
+        .route("/upload", get(routes::upload))
         .route("/vscode", get(routes::vscode))
         .route("/convert", any(ws::ws_handler))
         .merge(files::router())
