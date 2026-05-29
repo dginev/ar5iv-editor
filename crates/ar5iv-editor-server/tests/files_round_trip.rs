@@ -434,9 +434,9 @@ async fn sweep_orphans_runs_on_create_and_removes_stale_orphans() {
 async fn arxiv_example_slot_unpacks_its_tarball() {
     let rig = TestRig::boot(default_session_cfg()).await;
     let user = rig.mint_user().await;
-    let s = rig.create_session(&user, "example:arxiv").await;
+    let s = rig.create_session(&user, "example:arxiv-1709-07020").await;
     let id = s["id"].as_str().unwrap();
-    // Listing should contain at least the entry file from the tarball.
+    // Listing should contain every file from the tarball.
     let resp = rig
         .client
         .get(rig.url(&format!("/api/session/{id}/files")))
@@ -458,6 +458,10 @@ async fn arxiv_example_slot_unpacks_its_tarball() {
     assert!(
         paths.iter().any(|p| p == "preprint_inset.pdf"),
         "tarball should unpack preprint_inset.pdf; got: {paths:?}"
+    );
+    assert!(
+        paths.iter().any(|p| p == "full_article.bbl"),
+        "tarball should unpack full_article.bbl; got: {paths:?}"
     );
     assert_eq!(s["entry"], "full_article.tex");
 }
