@@ -236,6 +236,12 @@ pub fn export_zip<W: Write + std::io::Seek>(
     let mut writer = zip::ZipWriter::new(out);
     let opts = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
+        // Maximal deflate level (flate2 range 0–9) to minimise download
+        // size: the bundle is mostly text (HTML, the ar5iv CSS, SVG) that
+        // compresses well, and the LaTeXML conversion dominates CPU, so
+        // the extra deflate effort is negligible. (Already-compressed
+        // PNG/JPG assets simply don't shrink further — no CPU concern.)
+        .compression_level(Some(9))
         .unix_permissions(0o644);
 
     let mut total: u64 = 0;
