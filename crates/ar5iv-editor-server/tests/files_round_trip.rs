@@ -659,3 +659,49 @@ async fn upload_extension_allowlist_skips_unknown_types() {
         .collect();
     assert_eq!(skipped, vec!["evil.exe".to_string()]);
 }
+
+#[tokio::test]
+async fn import_archive_accepts_body_over_2mb_default_limit() {
+    // Regression: Axum's default 2 MB request-body cap rejected archives
+    // between 2 MB and our archive quota with "Failed to buffer the
+    // request body: length limit exceeded" — before our own quota check
+    // ran. The router now raises the body limit to track the configured
+    // quotas, so a 3 MB archive is accepted (and bounded by the real
+    // per-route quotas instead).
+    let mut cfg = default_session_cfg();
+    cfg.quota_upload_bytes = 10 * 1024 * 1024;
+    cfg.quota_archive_bytes = 25 * 1024 * 1024;
+    cfg.quota_session_bytes = 50 * 1024 * 1024;
+    let rig = TestRig::boot(cfg).await;
+    let user = rig.mint_user().await;
+
+    // A ~3 MB ZIP — comfortably over Axum's 2 MB default, under our caps.
+    // Stored (uncompressed) so the wire body is genuinely ~3 MB.
+    let mut zip_buf: Vec<u8> = Vec::new();
+    {
+        let cursor = std::io::Cursor::new(&mut zip_buf);
+        let mut w = zip::ZipWriter::new(cursor);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        w.start_file("main.tex", opts).unwrap();
+        // '%' is a TeX comment char — valid, inert filler.
+        std::io::Write::write_all(&mut w, &vec![b'%'; 3 * 1024 * 1024]).unwrap();
+        w.finish().unwrap();
+    }
+    assert!(zip_buf.len() > 2 * 1024 * 1024, "test archive must exceed Axum's 2 MB default");
+
+    let resp = rig
+        .client
+        .post(rig.url("/api/import-archive"))
+        .header(HEADER_USER, &user)
+        .header("content-type", "application/zip")
+        .body(zip_buf)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        200,
+        "a 3 MB archive must be accepted (not rejected by the body limit)"
+    );
+}

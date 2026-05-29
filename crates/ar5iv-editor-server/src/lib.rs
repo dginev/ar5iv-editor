@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     routing::{any, get},
 };
 use tower_http::trace::TraceLayer;
@@ -39,6 +40,20 @@ pub struct AppState {
 }
 
 pub fn router(state: AppState) -> Router {
+    // Axum buffers `Bytes` bodies under a 2 MB default limit, which trips
+    // *before* our own quota checks on the archive/upload routes — a
+    // 3 MB ZIP would fail with "Failed to buffer the request body: length
+    // limit exceeded" long before the 25 MB archive cap. Raise the limit
+    // to cover the largest legitimate single request (a multipart folder
+    // upload bounded by the session cap, or an archive bounded by the
+    // archive cap), plus headroom for multipart framing. The per-route
+    // quota checks still enforce the tighter, friendlier limits.
+    let body_limit = {
+        let cfg = state.sessions.config();
+        cfg.quota_session_bytes
+            .max(cfg.quota_archive_bytes)
+            .saturating_add(4 * 1024 * 1024) as usize
+    };
     Router::new()
         .route("/", get(routes::root_redirect))
         .route("/about", get(routes::about))
@@ -50,6 +65,7 @@ pub fn router(state: AppState) -> Router {
         .route("/convert", any(ws::ws_handler))
         .merge(files::router())
         .route("/api/version", get(routes::version))
+        .layer(DefaultBodyLimit::max(body_limit))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
