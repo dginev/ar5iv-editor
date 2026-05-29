@@ -152,9 +152,11 @@ function convertOnce(
 }
 
 /** Fetch the session's self-contained export ZIP and trigger a browser
- *  download. Returns a short human description of what was downloaded. */
+ *  download. `output_only=1` keeps just the rendered output (index.html +
+ *  ar5iv CSS + image assets) and drops the uploaded LaTeX sources.
+ *  Returns a short human description of what was downloaded. */
 async function downloadExport(sessionId: string, userId: string): Promise<string> {
-  const resp = await fetch(`/api/session/${sessionId}/export-zip`, {
+  const resp = await fetch(`/api/session/${sessionId}/export-zip?output_only=1`, {
     credentials: "include",
     headers: { [HEADER_USER]: userId },
   });

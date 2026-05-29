@@ -128,7 +128,8 @@ npm run dev
 Open <http://localhost:5173/editor>. `GET /upload` is a standalone, no-preview
 archive converter: pick or drag a single self-sufficient LaTeX archive (`.zip`,
 `.tar.gz`, `.tgz`, or a bare `.gz`) and the converted ar5iv HTML5 is packaged as
-a self-contained ZIP (`index.html` + ar5iv CSS + sources) and auto-downloaded.
+a self-contained ZIP (`index.html` + ar5iv CSS + image assets, no LaTeX sources)
+and auto-downloaded.
 
 ## VS Code extension local test
 

@@ -41,6 +41,22 @@ pub enum ConflictPolicy {
     Overwrite,
 }
 
+/// What an [`export_zip`] bundle includes from the session directory
+/// (the synthetic `extras` — `index.html`, `css/` — are always added).
+#[derive(Debug, Clone, Copy, Default)]
+pub enum ExportScope {
+    /// Everything in the session dir plus the extras — the editor's
+    /// "download project" (sources + rendered output).
+    #[default]
+    Full,
+    /// Only rendered output the page needs to display: image assets
+    /// (`png`/`jpg`/`svg`/…) plus the synthetic `index.html` + `css/`.
+    /// LaTeX sources/build inputs (`.tex`, `.bib`, `.bbl`, `.sty`,
+    /// `.cls`, `.pdf`/`.eps` figure sources, …) are dropped. Used by the
+    /// `/upload` ZIP-to-ZIP converter.
+    OutputOnly,
+}
+
 #[derive(Debug)]
 pub struct UnpackOutcome {
     pub bytes_written: u64,
@@ -185,10 +201,16 @@ pub fn unpack_overlay(
 /// Synthetic entries that collide with on-disk paths win (the user's
 /// own `index.html` would be overwritten by ours). Callers pass a path
 /// they don't expect to clash, or stage their own naming.
+///
+/// `scope` selects which session files are bundled — everything
+/// ([`ExportScope::Full`]) or only displayable output assets
+/// ([`ExportScope::OutputOnly`]). The synthetic `extras` are added
+/// regardless.
 pub fn export_zip<W: Write + std::io::Seek>(
     session_dir: &Path,
     out: &mut W,
     extras: &[(String, Vec<u8>)],
+    scope: ExportScope,
 ) -> Result<u64, AppError> {
     use zip::write::SimpleFileOptions;
 
@@ -201,7 +223,13 @@ pub fn export_zip<W: Write + std::io::Seek>(
     walk_for_export(session_dir, session_dir, &mut paths)?;
     paths.retain(|(rel, _)| {
         let rel_str = rel.to_string_lossy().replace('\\', "/");
-        !extra_names.contains(&rel_str)
+        if extra_names.contains(&rel_str) {
+            return false;
+        }
+        match scope {
+            ExportScope::Full => true,
+            ExportScope::OutputOnly => is_output_asset(rel),
+        }
     });
     paths.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -636,6 +664,22 @@ fn is_allowed_extension(rel: &Path) -> bool {
     )
 }
 
+/// True for files that belong in an [`ExportScope::OutputOnly`] bundle:
+/// web-displayable image assets the rendered HTML references. Everything
+/// else in a session — LaTeX sources (`.tex`/`.bib`/`.sty`/…), figure
+/// sources (`.pdf`/`.eps`, which the post-processor converts to PNG),
+/// build artefacts — is an input and is dropped. Case-insensitive on the
+/// extension.
+fn is_output_asset(rel: &Path) -> bool {
+    matches!(
+        rel.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref(),
+        Some("png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "avif")
+    )
+}
+
 fn random_suffix() -> String {
     let mut bytes = [0u8; 8];
     let _ = rand::rngs::OsRng.try_fill_bytes(&mut bytes);
@@ -991,7 +1035,7 @@ mod tests {
 
         let mut buf: Vec<u8> = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut buf);
-        export_zip(src.path(), &mut cursor, &[]).unwrap();
+        export_zip(src.path(), &mut cursor, &[], ExportScope::Full).unwrap();
         drop(cursor);
 
         let dst = tempfile::tempdir().unwrap();
@@ -1012,7 +1056,7 @@ mod tests {
 
         let mut buf: Vec<u8> = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut buf);
-        export_zip(src.path(), &mut cursor, &[]).unwrap();
+        export_zip(src.path(), &mut cursor, &[], ExportScope::Full).unwrap();
         drop(cursor);
 
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&buf)).unwrap();
@@ -1023,6 +1067,42 @@ mod tests {
             !names.iter().any(|n| n == "__preview.html"),
             "converter scratch must be excluded: {names:?}"
         );
+    }
+
+    #[test]
+    fn export_output_only_drops_sources_keeps_images() {
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("main.tex"), b"\\documentclass{article}").unwrap();
+        std::fs::write(src.path().join("refs.bib"), b"@article{x}").unwrap();
+        std::fs::write(src.path().join("paper.pdf"), b"%PDF-1.4").unwrap(); // figure source
+        std::fs::write(src.path().join("fig.png"), b"\x89PNG").unwrap();
+        std::fs::create_dir_all(src.path().join("img")).unwrap();
+        std::fs::write(src.path().join("img/plot.svg"), b"<svg/>").unwrap();
+
+        // The synthetic output the route always adds.
+        let extras = vec![
+            ("index.html".to_string(), b"<html></html>".to_vec()),
+            ("css/ar5iv.css".to_string(), b"body{}".to_vec()),
+        ];
+        let mut buf: Vec<u8> = Vec::new();
+        let mut cursor = std::io::Cursor::new(&mut buf);
+        export_zip(src.path(), &mut cursor, &extras, ExportScope::OutputOnly).unwrap();
+        drop(cursor);
+
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&buf)).unwrap();
+        let names: Vec<String> =
+            (0..zip.len()).map(|i| zip.by_index(i).unwrap().name().to_string()).collect();
+        // Kept: synthetic html/css + displayable image assets.
+        for keep in ["index.html", "css/ar5iv.css", "fig.png", "img/plot.svg"] {
+            assert!(names.iter().any(|n| n == keep), "output-only should keep {keep}: {names:?}");
+        }
+        // Dropped: LaTeX sources and figure sources.
+        for dropped in ["main.tex", "refs.bib", "paper.pdf"] {
+            assert!(
+                !names.iter().any(|n| n == dropped),
+                "output-only should drop {dropped}: {names:?}"
+            );
+        }
     }
 
     #[test]

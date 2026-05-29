@@ -10,7 +10,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{Multipart, Path as AxumPath, State},
+    extract::{Multipart, Path as AxumPath, Query, State},
     http::{HeaderMap, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -579,10 +579,20 @@ async fn export_zip(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Response, AppError> {
     let session = require_session(&state, &headers, &id).await?;
     session.touch();
     let dir = session.dir.clone();
+
+    // `?output_only=1` (used by the /upload ZIP-to-ZIP converter) bundles
+    // only the rendered output — index.html + css/ + image assets — and
+    // drops the LaTeX sources. The editor's "download project" omits the
+    // flag and gets the full project.
+    let scope = match params.get("output_only").map(String::as_str) {
+        Some("1" | "true") => archive::ExportScope::OutputOnly,
+        _ => archive::ExportScope::Full,
+    };
 
     // Bundle the cached preview HTML alongside the source files when
     // it's available. Session-relative `/api/session/{id}/files/<rel>`
@@ -601,7 +611,7 @@ async fn export_zip(
     let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, AppError> {
         let mut buf: Vec<u8> = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut buf);
-        archive::export_zip(&dir, &mut cursor, &extras)?;
+        archive::export_zip(&dir, &mut cursor, &extras, scope)?;
         Ok(buf)
     })
     .await
