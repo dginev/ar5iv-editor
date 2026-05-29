@@ -13,9 +13,21 @@ use tracing::error;
 
 use crate::session::Session;
 
-/// One conversion job: the WS request plus the session it ran inside,
-/// plus a oneshot for the response.
-type Job = (ConvertRequest, Arc<Session>, oneshot::Sender<ConvertResponse>);
+/// Result of an archive (`whatsout=archive`) conversion: the bundled ZIP
+/// bytes, or a `ConvertResponse` carrying the engine log/status when
+/// nothing rendered — so `/upload` can show the log instead of handing
+/// back an empty download.
+pub type ArchiveResult = Result<Vec<u8>, ConvertResponse>;
+
+/// A unit of work for the single latexml-oxide worker thread.
+enum Job {
+    /// Live-preview conversion → HTML fragment (the `/convert` WS path).
+    Convert(ConvertRequest, Arc<Session>, oneshot::Sender<ConvertResponse>),
+    /// One-shot conversion → self-contained ZIP bundle (the `/upload`
+    /// ZIP-to-ZIP path), produced via latexml-oxide's native
+    /// `whatsout=archive` packer.
+    Archive(Arc<Session>, oneshot::Sender<ArchiveResult>),
+}
 
 pub struct Converter {
     tx: std_mpsc::Sender<Job>,
@@ -44,12 +56,28 @@ impl Converter {
     pub async fn convert(&self, req: ConvertRequest, session: Arc<Session>) -> ConvertResponse {
         let id = req.id;
         let (resp_tx, resp_rx) = oneshot::channel();
-        if self.tx.send((req, session, resp_tx)).is_err() {
+        if self.tx.send(Job::Convert(req, session, resp_tx)).is_err() {
             return ConvertResponse::fatal(id, "converter worker has died");
         }
         match resp_rx.await {
             Ok(resp) => resp,
             Err(_) => ConvertResponse::fatal(id, "converter worker dropped the response"),
+        }
+    }
+
+    /// Convert the session's project into a self-contained ZIP bundle
+    /// (rendered HTML + the engine's generated/copied resources, no
+    /// sources) via latexml-oxide's native `whatsout=archive`. Returns
+    /// the ZIP bytes, or `Err(ConvertResponse)` with the log when nothing
+    /// rendered.
+    pub async fn convert_archive(&self, session: Arc<Session>) -> ArchiveResult {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        if self.tx.send(Job::Archive(session, resp_tx)).is_err() {
+            return Err(ConvertResponse::fatal(0, "converter worker has died"));
+        }
+        match resp_rx.await {
+            Ok(out) => out,
+            Err(_) => Err(ConvertResponse::fatal(0, "converter worker dropped the response")),
         }
     }
 }
@@ -59,43 +87,56 @@ fn worker_main(rx: std_mpsc::Receiver<Job>) {
     // worker thread doesn't need to do anything here. The previous
     // `init_logger()` call always failed at this point because the global
     // logger was already taken, leaving LOG_BUFFER unwired.
-    while let Ok((mut req, mut session, mut reply)) = rx.recv() {
-        // Skip-stale-on-pull: drain anything already queued behind us and
-        // process only the freshest request. Older ones get a cheap
-        // "superseded" reply so the WS handler's await still completes;
-        // the frontend filters those out by id and status.
-        loop {
-            match rx.try_recv() {
-                Ok((newer_req, newer_session, newer_reply)) => {
-                    let stale_id = req.id;
-                    let stale_version = req.version;
-                    let _ = reply.send(ConvertResponse {
-                        id: stale_id,
-                        result: String::new(),
-                        status: "superseded".into(),
-                        status_code: 0,
-                        version: stale_version,
-                        log: String::new(),
-                        timings: None,
-                        diagnostics: Vec::new(),
-                        sources: Vec::new(),
+    while let Ok(first) = rx.recv() {
+        // Drain everything already queued behind us into one burst.
+        let mut burst = vec![first];
+        while let Ok(j) = rx.try_recv() {
+            burst.push(j);
+        }
+        // Skip-stale: only the *last* Convert in the burst is worth running
+        // (debounced keystrokes flood the channel); earlier ones get a cheap
+        // "superseded" reply so the WS await still completes and the frontend
+        // filters them by id + status. Archive jobs are one-shot — all run.
+        let last_convert = burst.iter().rposition(|j| matches!(j, Job::Convert(..)));
+        for (i, job) in burst.into_iter().enumerate() {
+            match job {
+                Job::Convert(req, session, reply) => {
+                    if Some(i) != last_convert {
+                        let _ = reply.send(ConvertResponse {
+                            id:          req.id,
+                            result:      String::new(),
+                            status:      "superseded".into(),
+                            status_code: 0,
+                            version:     req.version,
+                            log:         String::new(),
+                            timings:     None,
+                            diagnostics: Vec::new(),
+                            sources:     Vec::new(),
+                        });
+                        continue;
+                    }
+                    let id = req.id;
+                    let resp = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        convert_one(req, &session)
+                    }))
+                    .unwrap_or_else(|_| {
+                        error!("latexml-oxide worker panicked while converting id={id}");
+                        ConvertResponse::fatal(id, "internal conversion failure (panic)")
                     });
-                    req = newer_req;
-                    session = newer_session;
-                    reply = newer_reply;
+                    let _ = reply.send(resp);
                 }
-                Err(_) => break,
+                Job::Archive(session, reply) => {
+                    let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        convert_one_archive(&session)
+                    }))
+                    .unwrap_or_else(|_| {
+                        error!("latexml-oxide worker panicked while packing an archive");
+                        Err(ConvertResponse::fatal(0, "internal conversion failure (panic)"))
+                    });
+                    let _ = reply.send(out);
+                }
             }
         }
-        let id = req.id;
-        let resp = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            convert_one(req, &session)
-        }))
-        .unwrap_or_else(|_| {
-            error!("latexml-oxide worker panicked while converting id={id}");
-            ConvertResponse::fatal(id, "internal conversion failure (panic)")
-        });
-        let _ = reply.send(resp);
     }
 }
 
@@ -324,6 +365,167 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
 /// records the path it was handed; the editor only needs the file's name).
 fn path_basename(p: &str) -> String {
     p.rsplit(['/', '\\']).next().unwrap_or(p).to_ascii_lowercase()
+}
+
+/// ar5iv stylesheet links spliced into the archived document's `<head>`,
+/// pointing at the `css/` directory we drop alongside it in the bundle.
+const ARCHIVE_CSS_LINKS: &str = "<link rel=\"stylesheet\" href=\"css/ar5iv-fonts.css\">\n\
+<link rel=\"stylesheet\" href=\"css/ar5iv.css\">\n";
+
+/// Convert the session's detected main entry into a self-contained ZIP
+/// bundle via latexml-oxide's native `whatsout=archive` packer.
+///
+/// The trick (mirroring the `latexml_oxide` binary): post-process with
+/// `destination` in a *fresh* staging dir, so the engine writes the
+/// rendered HTML's generated + copied resources (converted PNG/SVG,
+/// copied raster figures) there — cleanly separated from the uploaded
+/// sources, which stay in the session dir. `pack_archive` then bundles
+/// the HTML + that staging dir, naturally yielding output-only contents
+/// (no `.tex`/`.bib`/…) with correctly-resolving relative image paths.
+///
+/// Returns `Err(ConvertResponse)` carrying the log/status when nothing
+/// rendered, so the caller can surface the log instead of an empty ZIP.
+fn convert_one_archive(session: &Session) -> ArchiveResult {
+    // The project's detected main entry (set at session create / file-set
+    // change), falling back to `main.tex`.
+    let main = session
+        .main_entry
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .unwrap_or_else(|| "main.tex".to_string());
+    let abs_path = session
+        .resolve(&main)
+        .map_err(|_| ConvertResponse::fatal(0, format!("invalid main entry: {main}")))?;
+    let tex = match std::fs::read_to_string(&abs_path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && !session.dir.exists() => {
+            return Err(ConvertResponse::session_expired(0));
+        }
+        Err(e) => return Err(ConvertResponse::fatal(0, format!("read {main}: {e}"))),
+    };
+
+    // Same fragment→document promotion the live path uses (a file with
+    // its own `\documentclass` must be digested as a full document).
+    let mut whatsin = DataSize::Fragment;
+    if contains_documentclass(&tex) {
+        whatsin = DataSize::Document;
+    }
+    let opts = OxideConfig {
+        verbosity: 1,
+        format: OutputFormat::HTML5,
+        whatsin: whatsin.clone(),
+        whatsout: whatsin,
+        preamble: None,
+        postamble: None,
+        mode: None,
+        bindings_dispatch: None,
+        extra_bindings_dispatch: None,
+        preload: None,
+        search_paths: Some(vec![session.dir.to_string_lossy().into_owned()]),
+        include_comments: Some(false),
+        nomathparse: None,
+        // No source map: this is a downloadable bundle, not the live
+        // editor preview — the `data-sourcepos` cruft isn't wanted.
+        source_map: None,
+    };
+    let converter = OxideConverter::from_config(opts);
+    let resp = converter.convert(abs_path.to_string_lossy().into_owned());
+
+    let no_render = |resp: &latexml::converter::ConversionResponse| ConvertResponse {
+        id:          0,
+        result:      String::new(),
+        status:      resp.status.clone(),
+        status_code: resp.status_code as i32,
+        version:     0,
+        log:         resp.log.clone(),
+        timings:     None,
+        diagnostics: parse_diagnostics(&resp.log),
+        sources:     Vec::new(),
+    };
+
+    let xml = match &resp.result {
+        Some(x) if !x.is_empty() => x.clone(),
+        _ => return Err(no_render(&resp)),
+    };
+
+    // Post-process into a clean staging dir (resources land here, separate
+    // from sources).
+    let staging = tempfile::tempdir()
+        .map_err(|e| ConvertResponse::fatal(0, format!("archive staging dir: {e}")))?;
+    let dest_path = staging.path().join("index.html");
+    let dest_str = dest_path.to_string_lossy().into_owned();
+    let session_dir_str = session.dir.to_string_lossy().into_owned();
+    let post_opts = PostOptions {
+        pmml: true,
+        cmml: false,
+        keep_xmath: false,
+        stylesheet: Some("resources/XSLT/LaTeXML-html5.xsl"),
+        destination: Some(&dest_str),
+        source_directory: Some(&session_dir_str),
+        nodefaultresources: true,
+        css_files: &[],
+        js_files: &[],
+        noinvisibletimes: false,
+        mathtex: false,
+        navigationtoc: None,
+        split: false,
+        split_xpath: None,
+        split_naming: None,
+        xslt_parameters: &[],
+        graphics_svg_threshold_kb: 0,
+        schemadocs: false,
+        whatsout: latexml_post::extract::Whatsout::Archive,
+    };
+    let html = run_post_processing(&xml, &post_opts);
+    if html.trim().is_empty() {
+        return Err(no_render(&resp));
+    }
+
+    // The native packer bundles the engine's resources (converted/copied
+    // images) but not ar5iv's project stylesheet — without it the bundle
+    // renders unstyled. Drop the ar5iv CSS into the staging dir (so
+    // pack_archive bundles it) and link it from the document <head> so the
+    // download matches the live preview's look.
+    let css_dir = staging.path().join("css");
+    if let Err(e) = std::fs::create_dir_all(&css_dir)
+        .and_then(|_| std::fs::write(css_dir.join("ar5iv.css"), crate::files::AR5IV_CSS))
+        .and_then(|_| std::fs::write(css_dir.join("ar5iv-fonts.css"), crate::files::AR5IV_FONTS_CSS))
+    {
+        return Err(ConvertResponse::fatal(0, format!("write bundle css: {e}")));
+    }
+    let html = match html.find("</head>") {
+        Some(pos) => {
+            let mut out = String::with_capacity(html.len() + ARCHIVE_CSS_LINKS.len());
+            out.push_str(&html[..pos]);
+            out.push_str(ARCHIVE_CSS_LINKS);
+            out.push_str(&html[pos..]);
+            out
+        }
+        None => html,
+    };
+
+    // pack_archive writes the ZIP to a path and walks `resource_dir`
+    // (skipping `.html`); keep the ZIP in a *separate* temp dir so it
+    // can't bundle itself. Read it back, then both temps drop (delete).
+    let zip_dir = tempfile::tempdir()
+        .map_err(|e| ConvertResponse::fatal(0, format!("archive zip dir: {e}")))?;
+    let zip_path = zip_dir.path().join("bundle.zip");
+    let zip_path_str = zip_path.to_string_lossy().into_owned();
+    latexml_post::pack::pack_archive(&latexml_post::pack::PackOptions {
+        zip_path:          &zip_path_str,
+        html_filename:     "index.html",
+        html:              &html,
+        log_filename:      None, // don't ship the conversion log in the bundle
+        log:               "",
+        status:            &resp.status,
+        resource_dir:      Some(staging.path()),
+        telemetry_json:    None,
+        source_date_epoch: None,
+    })
+    .map_err(|e| ConvertResponse::fatal(0, format!("pack archive: {e}")))?;
+
+    std::fs::read(&zip_path).map_err(|e| ConvertResponse::fatal(0, format!("read archive: {e}")))
 }
 
 /// Parse the engine's captured log buffer into structured

@@ -1,17 +1,15 @@
 // Standalone archive-conversion page (`/upload`): ZIP-to-ZIP, no preview.
 //
-// Pick or drag-and-drop a self-sufficient LaTeX archive (.zip / .tar.gz /
-// .tgz / .gz). It's imported into a fresh session via
-// `POST /api/import-archive`, converted once over the same `/convert`
-// WebSocket the editor uses (headless — nothing is rendered on this
-// page), then the self-contained result bundle from
-// `GET /api/session/{id}/export-zip` is streamed straight to a browser
-// download. No conversion or preview logic lives here; this is the glue
-// that turns the existing import + convert + export pipeline into a
-// one-shot archive-in / archive-out form.
+// Drop a self-sufficient LaTeX archive (.zip / .tar.gz / .tgz / .gz). It's
+// imported into a fresh session via `POST /api/import-archive`, then
+// `GET /api/session/{id}/archive` runs the conversion server-side and
+// streams back a self-contained HTML5 ZIP — produced by latexml-oxide's
+// native `whatsout=archive` packer (rendered HTML + the engine's
+// generated/copied resources, no uploaded sources). When a conversion
+// renders nothing the server returns the log (422), which we print on the
+// page. No preview, no WebSocket — pure archive-in / archive-out glue.
 
 import "./styles.css";
-import { ConvertClient, type ConvertResponse } from "./ws.ts";
 
 // Matches the server's default archive cap (`quota_archive_bytes`,
 // config.rs). Client-side reject before the upload so the user gets an
@@ -59,8 +57,7 @@ function isAcceptedArchive(name: string): boolean {
   );
 }
 
-/** Advisory Content-Type — the server believes the magic bytes, not this,
- *  but send something honest. */
+/** Advisory Content-Type — the server believes the magic bytes, not this. */
 function archiveContentType(name: string): string {
   return name.toLowerCase().endsWith(".zip") ? "application/zip" : "application/gzip";
 }
@@ -104,70 +101,31 @@ async function importArchive(file: File, userId: string): Promise<SessionEnvelop
   return (await resp.json()) as SessionEnvelope;
 }
 
-function websocketUrl(sessionId: string, userId: string): string {
-  const proto = location.protocol === "https:" ? "wss://" : "ws://";
-  return (
-    `${proto}${location.host}/convert?session_id=${encodeURIComponent(sessionId)}` +
-    `&user_id=${encodeURIComponent(userId)}`
-  );
-}
+type ArchiveResult =
+  | { kind: "downloaded"; what: string }
+  | { kind: "no-render"; log: string };
 
-/** Run one conversion over the WS and resolve with the first terminal
- *  (non-superseded) response. The export ZIP picks up the rendered HTML
- *  the server caches as a side effect of this convert; we don't render it
- *  here. */
-function convertOnce(
-  url: string,
-  entry: string,
-  onStatus: (s: string) => void,
-): Promise<ConvertResponse> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const client = new ConvertClient(url, {
-      onMessage: (resp: ConvertResponse) => {
-        if (settled || resp.status === "superseded") return;
-        settled = true;
-        client.close();
-        resolve(resp);
-      },
-      onStatus: (s) => {
-        if (!settled) onStatus(s);
-      },
-    });
-    client.send({
-      id: 1,
-      active_file: entry,
-      version: 0,
-      profile: "fragment",
-      format: "html5",
-    });
-    // Safety net so a silent socket can't hang the form forever.
-    window.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      client.close();
-      reject(new Error("conversion timed out"));
-    }, 120_000);
-  });
-}
-
-/** Fetch the session's self-contained export ZIP and trigger a browser
- *  download. `output_only=1` keeps just the rendered output (index.html +
- *  ar5iv CSS + image assets) and drops the uploaded LaTeX sources.
- *  Returns a short human description of what was downloaded. */
-async function downloadExport(sessionId: string, userId: string): Promise<string> {
-  const resp = await fetch(`/api/session/${sessionId}/export-zip?output_only=1`, {
+/** Convert the session into a self-contained ZIP and trigger a download.
+ *  A `422` means the conversion rendered nothing — the body is the log,
+ *  which the caller shows on the page instead of downloading. */
+async function downloadArchive(sessionId: string, userId: string): Promise<ArchiveResult> {
+  const resp = await fetch(`/api/session/${sessionId}/archive`, {
     credentials: "include",
     headers: { [HEADER_USER]: userId },
   });
+  if (resp.status === 422) {
+    const log = await resp.text();
+    return { kind: "no-render", log: log || "The converter produced no output." };
+  }
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(text || `export failed (${resp.status})`);
+    throw new Error(text || `archive failed (${resp.status})`);
   }
+
   const blob = await resp.blob();
   const cd = resp.headers.get("content-disposition") || "";
   const m = /filename="?([^"]+)"?/.exec(cd);
-  const filename = m?.[1] ?? "ar5iv-export.zip";
+  const filename = m?.[1] ?? "ar5iv-archive.zip";
 
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -178,12 +136,12 @@ async function downloadExport(sessionId: string, userId: string): Promise<string
   a.remove();
   // Revoke on the next tick so the download has grabbed the blob first.
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  return `${filename} (${fmtBytes(blob.size)})`;
+  return { kind: "downloaded", what: `${filename} (${fmtBytes(blob.size)})` };
 }
 
 let busy = false;
 
-/** Drive one upload → import → convert → export → download cycle. */
+/** Drive one upload → import → convert → download cycle. */
 async function handleFile(file: File): Promise<void> {
   if (busy) return;
   if (!isAcceptedArchive(file.name)) {
@@ -207,36 +165,13 @@ async function handleFile(file: File): Promise<void> {
     const env = await importArchive(file, userId);
 
     setStatus("converting…");
-    const resp = await convertOnce(websocketUrl(env.id, userId), env.entry, (s) => {
-      setStatus(s);
-    });
-
-    if (resp.status_code === 4) {
-      setStatus("session expired — please upload again");
-      showLog(resp.log || "");
-      return;
-    }
-
-    // The export ZIP only carries an index.html when the conversion
-    // actually rendered — the server caches that HTML (for status 0/2,
-    // non-empty result) and bundles it as index.html. If nothing rendered
-    // (a fatal error, or an empty result), the ZIP would be source-only,
-    // so there's nothing worth handing back: print the log to the page and
-    // download nothing.
-    const rendered =
-      (resp.status_code === 0 || resp.status_code === 2) && resp.result.trim().length > 0;
-    if (!rendered) {
+    const res = await downloadArchive(env.id, userId);
+    if (res.kind === "downloaded") {
+      setStatus(`downloaded ${res.what}`);
+    } else {
       setStatus("conversion produced no HTML — see the log below");
-      showLog(resp.log || "The converter produced no HTML output.");
-      return;
+      showLog(res.log);
     }
-
-    setStatus("packaging…");
-    const what = await downloadExport(env.id, userId);
-    // status_code 2 = rendered with non-fatal errors.
-    const suffix = resp.status_code === 2 ? " — converted with warnings" : "";
-    setStatus(`downloaded ${what}${suffix}`);
-    if (resp.status_code === 2 && resp.log) showLog(resp.log);
   } catch (e) {
     setStatus("upload failed");
     showLog(String(e instanceof Error ? e.message : e));

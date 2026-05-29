@@ -10,8 +10,8 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{Multipart, Path as AxumPath, Query, State},
-    http::{HeaderMap, header},
+    extract::{Multipart, Path as AxumPath, State},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -123,6 +123,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/session/{id}/upload", post(upload_files))
         .route("/api/session/{id}/upload-archive", post(upload_archive))
         .route("/api/session/{id}/export-zip", get(export_zip))
+        .route("/api/session/{id}/archive", get(archive_zip))
         .route("/api/import-archive", post(import_archive))
         .route("/api/session/{id}/mkdir", post(mkdir))
         .route("/api/session/{id}/rename", post(rename))
@@ -579,20 +580,10 @@ async fn export_zip(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
-    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Response, AppError> {
     let session = require_session(&state, &headers, &id).await?;
     session.touch();
     let dir = session.dir.clone();
-
-    // `?output_only=1` (used by the /upload ZIP-to-ZIP converter) bundles
-    // only the rendered output — index.html + css/ + image assets — and
-    // drops the LaTeX sources. The editor's "download project" omits the
-    // flag and gets the full project.
-    let scope = match params.get("output_only").map(String::as_str) {
-        Some("1" | "true") => archive::ExportScope::OutputOnly,
-        _ => archive::ExportScope::Full,
-    };
 
     // Bundle the cached preview HTML alongside the source files when
     // it's available. Session-relative `/api/session/{id}/files/<rel>`
@@ -611,7 +602,7 @@ async fn export_zip(
     let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, AppError> {
         let mut buf: Vec<u8> = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut buf);
-        archive::export_zip(&dir, &mut cursor, &extras, scope)?;
+        archive::export_zip(&dir, &mut cursor, &extras)?;
         Ok(buf)
     })
     .await
@@ -631,12 +622,63 @@ async fn export_zip(
         .into_response())
 }
 
+/// `GET /api/session/{id}/archive` — convert the session's project into a
+/// self-contained HTML5 ZIP via latexml-oxide's native `whatsout=archive`
+/// packer and stream it as a download. This is the `/upload` ZIP-to-ZIP
+/// path: the bundle carries the rendered HTML + the engine's generated /
+/// copied resources only (no uploaded sources), produced correctly by the
+/// engine rather than by walking + filtering the session dir.
+///
+/// When nothing renders (fatal error / empty result) the conversion log is
+/// returned with `422 Unprocessable Entity` so the page can show it
+/// instead of downloading an empty archive.
+async fn archive_zip(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Response, AppError> {
+    let session = require_session(&state, &headers, &id).await?;
+    session.touch();
+
+    match state.converter.convert_archive(session.clone()).await {
+        Ok(bytes) => {
+            let filename = format!("ar5iv-{}.zip", &session.id.to_string()[..8]);
+            Ok((
+                [
+                    (header::CONTENT_TYPE, "application/zip".to_string()),
+                    (
+                        header::CONTENT_DISPOSITION,
+                        format!("attachment; filename=\"{filename}\""),
+                    ),
+                ],
+                bytes,
+            )
+                .into_response())
+        }
+        Err(resp) => {
+            // Nothing rendered — hand back the conversion log so /upload can
+            // surface it (mirrors the no-HTML branch's "show the log").
+            let body = if resp.log.trim().is_empty() {
+                format!("conversion produced no output ({})", resp.status)
+            } else {
+                resp.log
+            };
+            Ok((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                body,
+            )
+                .into_response())
+        }
+    }
+}
+
 /// ar5iv stylesheets (copied in from `~/git/ar5iv-css/css` into
 /// `frontend/public/css/`) embedded at compile time so the export
 /// route doesn't depend on the static-dir layout. Same files the live
 /// preview's shadow root pulls via `/static/css/...`.
-const AR5IV_CSS: &[u8] = include_bytes!("../../../frontend/public/css/ar5iv.css");
-const AR5IV_FONTS_CSS: &[u8] =
+pub(crate) const AR5IV_CSS: &[u8] = include_bytes!("../../../frontend/public/css/ar5iv.css");
+pub(crate) const AR5IV_FONTS_CSS: &[u8] =
     include_bytes!("../../../frontend/public/css/ar5iv-fonts.css");
 
 /// Build the synthetic-entry list for the export ZIP. When a preview
