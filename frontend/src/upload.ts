@@ -16,7 +16,7 @@ import { ConvertClient, type ConvertResponse } from "./ws.ts";
 // Matches the server's default archive cap (`quota_archive_bytes`,
 // config.rs). Client-side reject before the upload so the user gets an
 // immediate, friendly message instead of a 413 after a long transfer.
-const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
+const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
 
 const HEADER_USER = "x-ar5iv-user";
 const LS_USER = "ar5iv.user_id";

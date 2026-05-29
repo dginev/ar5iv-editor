@@ -229,10 +229,10 @@ Sessions and quotas (tunables for the file panel UI):
 | `AR5IV_EDITOR_SESSIONS_DIR`           | `$TMPDIR/ar5iv-editor-sessions`  | Where session tmpdirs live                             |
 | `AR5IV_EDITOR_SESSION_IDLE_SECS`      | `600`                            | Idle timeout before GC removes a session (10 min)      |
 | `AR5IV_EDITOR_GC_INTERVAL_SECS`       | `30`                             | How often the GC sweep runs                            |
-| `AR5IV_EDITOR_QUOTA_SESSION_BYTES`    | `52428800` (50 MB)               | Max total size per session                             |
+| `AR5IV_EDITOR_QUOTA_SESSION_BYTES`    | `104857600` (100 MB)             | Max total size per session                             |
 | `AR5IV_EDITOR_QUOTA_SESSION_FILES`    | `200`                            | Max file count per session                             |
-| `AR5IV_EDITOR_QUOTA_UPLOAD_BYTES`     | `10485760` (10 MB)               | Max single-file upload size                            |
-| `AR5IV_EDITOR_QUOTA_ARCHIVE_BYTES`    | `26214400` (25 MB)               | Max archive (ZIP / tar.gz) size                        |
+| `AR5IV_EDITOR_QUOTA_UPLOAD_BYTES`     | `52428800` (50 MB)               | Max single-file upload size                            |
+| `AR5IV_EDITOR_QUOTA_ARCHIVE_BYTES`    | `52428800` (50 MB)               | Max archive (ZIP / tar.gz / .gz) size                  |
 | `AR5IV_EDITOR_QUOTA_ROOT_BYTES`       | `2147483648` (2 GB)              | Soft cap on the entire sessions root                   |
 | `AR5IV_EDITOR_QUOTA_PER_USER`         | `8`                              | Concurrent sessions per `user_id` (LRU eviction)       |
 | `AR5IV_EDITOR_QUOTA_PER_IP`           | `16`                             | `user_id`s per remote IP                               |

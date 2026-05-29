@@ -105,7 +105,7 @@ defaults documented in `README.md` § Configuration.
 | `AR5IV_EDITOR_STATIC_DIR`         | `/app/frontend/dist`              |
 | `AR5IV_EDITOR_SESSIONS_DIR`       | `/var/ar5iv-sessions` (tmpfs)     |
 | `AR5IV_EDITOR_SESSION_IDLE_SECS`  | `600` (10 minutes)                |
-| `AR5IV_EDITOR_QUOTA_SESSION_BYTES`| `52428800` (50 MB)                |
+| `AR5IV_EDITOR_QUOTA_SESSION_BYTES`| `104857600` (100 MB)              |
 | `AR5IV_EDITOR_QUOTA_PER_USER`     | `8`                               |
 | `AR5IV_EDITOR_QUOTA_PER_IP`       | `16`                              |
 | `AR5IV_EDITOR_QUOTA_ROOT_BYTES`   | `2147483648` (2 GB)               |

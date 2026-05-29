@@ -48,18 +48,23 @@ impl SessionConfig {
                 .unwrap_or_else(|_| std::env::temp_dir().join("ar5iv-editor-sessions")),
             idle_timeout: env_secs("AR5IV_EDITOR_SESSION_IDLE_SECS", 600)?, // 10 min
             gc_interval:  env_secs("AR5IV_EDITOR_GC_INTERVAL_SECS", 30)?,
+            // Sized so a 50 MB archive upload can unpack + convert: the
+            // session holds the unpacked sources (~archive size) plus the
+            // engine's generated images, so it's ~2× the archive cap.
             quota_session_bytes: env_u64(
                 "AR5IV_EDITOR_QUOTA_SESSION_BYTES",
-                50 * 1024 * 1024,
+                100 * 1024 * 1024,
             )?,
             quota_session_files: env_u32("AR5IV_EDITOR_QUOTA_SESSION_FILES", 200)?,
+            // Per-file cap == archive cap, so any single file inside a
+            // 50 MB upload (e.g. a large PDF figure) fits.
             quota_upload_bytes:  env_u64(
                 "AR5IV_EDITOR_QUOTA_UPLOAD_BYTES",
-                10 * 1024 * 1024,
+                50 * 1024 * 1024,
             )?,
             quota_archive_bytes: env_u64(
                 "AR5IV_EDITOR_QUOTA_ARCHIVE_BYTES",
-                25 * 1024 * 1024,
+                50 * 1024 * 1024,
             )?,
             quota_root_bytes: env_u64(
                 "AR5IV_EDITOR_QUOTA_ROOT_BYTES",
