@@ -13,11 +13,21 @@ use tracing::error;
 
 use crate::session::Session;
 
-/// Result of an archive (`whatsout=archive`) conversion: the bundled ZIP
-/// bytes, or a `ConvertResponse` carrying the engine log/status when
+/// A successful archive conversion: the bundled ZIP bytes plus the
+/// engine's human-readable status summary ("No obvious problems",
+/// "2 warnings; 1 error", …) and status code (0 = clean, 2 = rendered
+/// with non-fatal issues) so the page can report the outcome.
+pub struct ArchiveOk {
+    pub zip:         Vec<u8>,
+    pub status:      String,
+    pub status_code: i32,
+}
+
+/// Result of an archive (`whatsout=archive`) conversion: an [`ArchiveOk`]
+/// bundle, or a `ConvertResponse` carrying the engine log/status when
 /// nothing rendered — so `/upload` can show the log instead of handing
 /// back an empty download.
-pub type ArchiveResult = Result<Vec<u8>, ConvertResponse>;
+pub type ArchiveResult = Result<ArchiveOk, ConvertResponse>;
 
 /// A unit of work for the single latexml-oxide worker thread.
 enum Job {
@@ -525,7 +535,13 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
     })
     .map_err(|e| ConvertResponse::fatal(0, format!("pack archive: {e}")))?;
 
-    std::fs::read(&zip_path).map_err(|e| ConvertResponse::fatal(0, format!("read archive: {e}")))
+    let zip = std::fs::read(&zip_path)
+        .map_err(|e| ConvertResponse::fatal(0, format!("read archive: {e}")))?;
+    Ok(ArchiveOk {
+        zip,
+        status: resp.status.clone(),
+        status_code: resp.status_code as i32,
+    })
 }
 
 /// Parse the engine's captured log buffer into structured

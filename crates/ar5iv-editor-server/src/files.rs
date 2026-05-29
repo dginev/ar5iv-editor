@@ -641,7 +641,7 @@ async fn archive_zip(
     session.touch();
 
     match state.converter.convert_archive(session.clone()).await {
-        Ok(bytes) => {
+        Ok(ok) => {
             let filename = format!("ar5iv-{}.zip", &session.id.to_string()[..8]);
             Ok((
                 [
@@ -650,14 +650,22 @@ async fn archive_zip(
                         header::CONTENT_DISPOSITION,
                         format!("attachment; filename=\"{filename}\""),
                     ),
+                    // The engine's outcome summary, surfaced in the page's
+                    // STATUS line (e.g. "No obvious problems",
+                    // "2 warnings; 1 error").
+                    (
+                        header::HeaderName::from_static("x-ar5iv-status"),
+                        archive_status_header(ok.status_code, &ok.status),
+                    ),
                 ],
-                bytes,
+                ok.zip,
             )
                 .into_response())
         }
         Err(resp) => {
             // Nothing rendered — hand back the conversion log so /upload can
-            // surface it (mirrors the no-HTML branch's "show the log").
+            // surface it (mirrors the no-HTML branch's "show the log"),
+            // plus the outcome summary in the status header.
             let body = if resp.log.trim().is_empty() {
                 format!("conversion produced no output ({})", resp.status)
             } else {
@@ -665,12 +673,44 @@ async fn archive_zip(
             };
             Ok((
                 StatusCode::UNPROCESSABLE_ENTITY,
-                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                [
+                    (header::CONTENT_TYPE, "text/plain; charset=utf-8".to_string()),
+                    (
+                        header::HeaderName::from_static("x-ar5iv-status"),
+                        archive_status_header(resp.status_code, &resp.status),
+                    ),
+                ],
                 body,
             )
                 .into_response())
         }
     }
+}
+
+/// Compose the `X-Ar5iv-Status` header value — the conversion outcome the
+/// `/upload` page shows in its STATUS line. Prefers the engine's own
+/// summary ("No obvious problems", "2 warnings; 1 error", "Fatal:…");
+/// falls back to a code-derived label when the engine left it blank.
+/// Sanitised to a single line of printable ASCII (header values can't
+/// carry CR/LF or arbitrary bytes).
+fn archive_status_header(status_code: i32, status: &str) -> String {
+    let s = status.trim();
+    let label = if !s.is_empty() {
+        s.to_string()
+    } else {
+        match status_code {
+            0 => "no problems".to_string(),
+            2 => "completed with issues".to_string(),
+            3 => "fatal failure".to_string(),
+            4 => "session expired".to_string(),
+            other => format!("status {other}"),
+        }
+    };
+    label
+        .chars()
+        .map(|c| if c.is_ascii_graphic() || c == ' ' { c } else { ' ' })
+        .take(200)
+        .collect()
 }
 
 /// ar5iv stylesheets (copied in from `~/git/ar5iv-css/css` into

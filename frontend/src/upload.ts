@@ -102,20 +102,23 @@ async function importArchive(file: File, userId: string): Promise<SessionEnvelop
 }
 
 type ArchiveResult =
-  | { kind: "downloaded"; what: string }
-  | { kind: "no-render"; log: string };
+  | { kind: "downloaded"; what: string; status: string }
+  | { kind: "no-render"; log: string; status: string };
 
 /** Convert the session into a self-contained ZIP and trigger a download.
  *  A `422` means the conversion rendered nothing — the body is the log,
- *  which the caller shows on the page instead of downloading. */
+ *  which the caller shows on the page instead of downloading. Either way
+ *  the `X-Ar5iv-Status` header carries the engine's outcome summary
+ *  ("No obvious problems", "2 warnings; 1 error", "Fatal…"). */
 async function downloadArchive(sessionId: string, userId: string): Promise<ArchiveResult> {
   const resp = await fetch(`/api/session/${sessionId}/archive`, {
     credentials: "include",
     headers: { [HEADER_USER]: userId },
   });
+  const status = resp.headers.get("x-ar5iv-status") ?? "";
   if (resp.status === 422) {
     const log = await resp.text();
-    return { kind: "no-render", log: log || "The converter produced no output." };
+    return { kind: "no-render", log: log || "The converter produced no output.", status };
   }
   if (!resp.ok) {
     const text = await resp.text();
@@ -136,7 +139,7 @@ async function downloadArchive(sessionId: string, userId: string): Promise<Archi
   a.remove();
   // Revoke on the next tick so the download has grabbed the blob first.
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  return { kind: "downloaded", what: `${filename} (${fmtBytes(blob.size)})` };
+  return { kind: "downloaded", what: `${filename} (${fmtBytes(blob.size)})`, status };
 }
 
 let busy = false;
@@ -167,9 +170,13 @@ async function handleFile(file: File): Promise<void> {
     setStatus("converting…");
     const res = await downloadArchive(env.id, userId);
     if (res.kind === "downloaded") {
-      setStatus(`downloaded ${res.what}`);
+      // Append the engine's outcome: "No obvious problems",
+      // "2 warnings; 1 error", etc.
+      const outcome = res.status ? ` — ${res.status}` : "";
+      setStatus(`downloaded ${res.what}${outcome}`);
     } else {
-      setStatus("conversion produced no HTML — see the log below");
+      const outcome = res.status || "no output";
+      setStatus(`conversion failed — ${outcome} — see the log below`);
       showLog(res.log);
     }
   } catch (e) {
