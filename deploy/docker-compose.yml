@@ -42,6 +42,13 @@ services:
       AR5IV_EDITOR_QUOTA_PER_IP: "4"
       AR5IV_EDITOR_SESSION_IDLE_SECS: "300"
       AR5IV_EDITOR_QUOTA_ROOT_BYTES: "536870912"   # 512 MB
+      # Privacy/cleanup: disable latexml-oxide's content-addressed graphics
+      # cache. It's on by default and persists converted figures under
+      # $HOME/.cache/latexml-oxide/graphics (up to 2 GB) — *outside* the
+      # per-session tmpfs the GC reaps. It's currently inert only because
+      # HOME=/nonexistent is unwritable; set this so converted user content
+      # can never start lingering across sessions if HOME ever changes.
+      LATEXML_GRAPHICS_CACHE_OFF: "1"
     volumes:
       - ar5iv-sessions:/var/ar5iv-sessions
     # No `cpuset` pin. A bare `cpuset: "0"` confines the container to a single

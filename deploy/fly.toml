@@ -28,6 +28,10 @@ primary_region = "iad"   # change to lhr / fra / nrt / syd as needed
   AR5IV_EDITOR_SESSION_IDLE_SECS = "300"
   AR5IV_EDITOR_QUOTA_ROOT_BYTES = "1073741824"   # 1 GB
   RUST_LOG = "info,ar5iv_editor=info"
+  # Disable latexml-oxide's content-addressed graphics cache so converted
+  # figures never persist outside the per-session tmpfs. See the matching
+  # note in deploy/docker-compose.yml.
+  LATEXML_GRAPHICS_CACHE_OFF = "1"
 
 [[services]]
   internal_port = 3000
