@@ -53,7 +53,7 @@ async function createProvider(
           if (os.platform() !== "linux") {
             throw new ConversionUnavailableError("executable", "Executable fallback MVP supports Ubuntu/Linux only.");
           }
-          return await createExecutableProvider();
+          return await createExecutableProvider(context);
         case "backend":
           return await createHostedProvider(context, managedServer);
         case "auto":

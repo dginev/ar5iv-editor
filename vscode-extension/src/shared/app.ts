@@ -199,7 +199,7 @@ class Ar5ivExtensionApp {
 }
 
 function readDebounceMs(): number {
-  const configured = vscode.workspace.getConfiguration("ar5iv").get<number>("debounceMs", 300);
-  if (!Number.isFinite(configured)) return 300;
+  const configured = vscode.workspace.getConfiguration("ar5iv").get<number>("debounceMs", 500);
+  if (!Number.isFinite(configured)) return 500;
   return Math.max(50, Math.min(5000, configured));
 }

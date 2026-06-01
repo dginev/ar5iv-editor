@@ -94,11 +94,21 @@
         "ar5iv.latexmlOxidePath": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to a latexml-oxide executable fallback."
+          "description": "Absolute path to a latexml-oxide engine (the `latexml_oxide` LSP server). Empty uses the downloaded binary, then PATH."
+        },
+        "ar5iv.latexmlOxideDownload": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically download the latexml-oxide engine on first use when no local binary is configured or on PATH. Cached in the extension's global storage."
+        },
+        "ar5iv.latexmlOxideDownloadBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Override the base URL the latexml-oxide engine is downloaded from (forks or local mirrors). Empty uses the official latexml-oxide GitHub releases."
         },
         "ar5iv.debounceMs": {
           "type": "number",
-          "default": 300,
+          "default": 500,
           "minimum": 50,
           "maximum": 5000,
           "description": "Delay after edits before refreshing the preview."
@@ -122,6 +132,7 @@
     "build:preview": "node esbuild.preview.js",
     "fetch:vscode-web": "node scripts/fetch-vscode-web.mjs",
     "typecheck": "tsc --noEmit",
+    "test:lsp": "node scripts/test_lsp_integration.js",
     "watch": "node esbuild.desktop.js --watch"
   },
   "dependencies": {
