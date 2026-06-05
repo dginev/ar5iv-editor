@@ -6,13 +6,12 @@ const os = require("os");
 class LspProcess {
   constructor(executable) {
     this.child = child_process.spawn(executable, ["--server"]);
-    this.buffer = "";
+    this.buffer = Buffer.alloc(0); // BYTES: Content-Length counts UTF-8 bytes, not JS chars
     this.pendingRequests = new Map();
     this.nextId = 2;
 
-    this.child.stdout.setEncoding("utf-8");
     this.child.stdout.on("data", (chunk) => {
-      this.buffer += chunk;
+      this.buffer = Buffer.concat([this.buffer, chunk]);
       this.parseBuffer();
     });
 
@@ -57,7 +56,7 @@ class LspProcess {
       if (headerEnd === -1) {
         break;
       }
-      const headerPart = this.buffer.substring(0, headerEnd);
+      const headerPart = this.buffer.subarray(0, headerEnd).toString("utf-8");
       let contentLength = 0;
       for (const line of headerPart.split("\r\n")) {
         if (line.toLowerCase().startsWith("content-length:")) {
@@ -71,8 +70,8 @@ class LspProcess {
       if (this.buffer.length < bodyStart + contentLength) {
         break;
       }
-      const bodyPart = this.buffer.substring(bodyStart, bodyStart + contentLength);
-      this.buffer = this.buffer.substring(bodyStart + contentLength);
+      const bodyPart = this.buffer.subarray(bodyStart, bodyStart + contentLength).toString("utf-8");
+      this.buffer = this.buffer.subarray(bodyStart + contentLength);
 
       try {
         const msg = JSON.parse(bodyPart);
@@ -155,7 +154,10 @@ async function run() {
 
   // Define LaTeX source elements
   const preamble1 = "\\documentclass{article}\n\\usepackage{localstyle}\n\\newcommand{\\foo}{Hello Preamble}\n\\begin{document}\n";
-  const body1 = "This is our initial body text. \\foo. Local style: \\mystyle";
+  // Deliberately multi-byte (typographic dash + pi): a byte/char framing
+  // mismatch hangs on this response, so the run fails loudly instead of
+  // passing on ASCII-only luck.
+  const body1 = "This is our initial body text \u2014 with $\\pi$. \\foo. Local style: \\mystyle";
 
   console.log("\n[STAGE 2] First compile: Cache Miss (needs to build preamble & dependencies)...");
   let t0 = performance.now();

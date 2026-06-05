@@ -63,7 +63,14 @@ interface PendingRequest {
 
 class LspProcess {
   private readonly child: child_process.ChildProcess;
-  private buffer = "";
+  // BYTE buffer, deliberately not a string: `Content-Length` counts UTF-8
+  // BYTES, while a decoded JS string is measured in UTF-16 code units. The
+  // old string-based parser compared bytes against chars, so any response
+  // containing a multi-byte character (typographic quotes, π, MathML
+  // operators — i.e. virtually every real document) came up "incomplete"
+  // by the byte/char difference and the request promise never resolved:
+  // a permanently blank preview. Frame in bytes; decode AFTER slicing.
+  private buffer: Buffer = Buffer.alloc(0);
   private readonly pendingRequests = new Map<number, PendingRequest>();
   private nextId = 2;
   private isDead = false;
@@ -71,9 +78,8 @@ class LspProcess {
 
   constructor(executable: string) {
     this.child = child_process.spawn(executable, ["--server"]);
-    this.child.stdout?.setEncoding("utf-8");
-    this.child.stdout?.on("data", (chunk: string) => {
-      this.buffer += chunk;
+    this.child.stdout?.on("data", (chunk: Buffer) => {
+      this.buffer = Buffer.concat([this.buffer, chunk]);
       this.parseBuffer();
     });
     this.child.on("error", (err) => {
@@ -150,7 +156,8 @@ class LspProcess {
       if (headerEnd === -1) {
         break;
       }
-      const headerPart = this.buffer.substring(0, headerEnd);
+      // Headers are ASCII; decoding just the header slice is safe.
+      const headerPart = this.buffer.subarray(0, headerEnd).toString("utf-8");
       let contentLength = 0;
       for (const line of headerPart.split("\r\n")) {
         if (line.toLowerCase().startsWith("content-length:")) {
@@ -165,11 +172,12 @@ class LspProcess {
         }
       }
       const bodyStart = headerEnd + 4;
+      // Byte-to-byte comparison: contentLength is a byte count.
       if (this.buffer.length < bodyStart + contentLength) {
         break;
       }
-      const bodyPart = this.buffer.substring(bodyStart, bodyStart + contentLength);
-      this.buffer = this.buffer.substring(bodyStart + contentLength);
+      const bodyPart = this.buffer.subarray(bodyStart, bodyStart + contentLength).toString("utf-8");
+      this.buffer = this.buffer.subarray(bodyStart + contentLength);
 
       try {
         const msg = JSON.parse(bodyPart);
