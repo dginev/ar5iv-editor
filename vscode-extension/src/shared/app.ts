@@ -1,8 +1,14 @@
 import * as vscode from "vscode";
 import type { RuntimeServices } from "./runtime";
 import type { ConversionProvider, ConversionSession } from "./conversionProvider";
+
+/** Workspace-sync caps: stay well under the server session quotas
+ *  (200 files / 100 MB) and skip oversized assets rather than fail. */
+const MAX_SYNC_FILES = 150;
+const MAX_SYNC_FILE_BYTES = 20 * 1024 * 1024;
 import { ConversionUnavailableError } from "./conversionProvider";
 import { buildConvertRequest, isLatexDocument, workspaceRootFor } from "./documentModel";
+import type { SyncFile } from "./conversionProvider";
 import { DiagnosticPublisher } from "./diagnostics";
 import { Debouncer } from "./debounce";
 import { PreviewPanel } from "./previewPanel";
@@ -152,7 +158,63 @@ class Ar5ivExtensionApp {
       workspaceRoot: root,
       displayName: root ?? document.uri.fsPath,
     });
+    this.syncedMtimes.clear();
+    await this.syncWorkspaceFiles(document);
   }
+
+  /** Push the workspace's project files (TeX sources, bibliographies,
+   *  figures) to a remote session so `\input`/`\includegraphics`
+   *  siblings resolve server-side. No-op for local-engine sessions (no
+   *  `syncFiles`) and for documents outside a workspace. Stat-diffed:
+   *  only files whose mtime changed since the last pass are re-read and
+   *  re-pushed, so the per-convert cost is one stat per project file. */
+  private async syncWorkspaceFiles(document: vscode.TextDocument): Promise<void> {
+    const session = this.session;
+    if (!session?.syncFiles) return;
+    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+    if (!folder) return;
+
+    const pattern = new vscode.RelativePattern(
+      folder,
+      "**/*.{tex,sty,cls,bib,bst,bbl,cfg,clo,def,png,jpg,jpeg,gif,svg,pdf,eps}",
+    );
+    const uris = await vscode.workspace.findFiles(
+      pattern,
+      "**/{node_modules,.git,target,dist,out}/**",
+      MAX_SYNC_FILES,
+    );
+    const activeUri = document.uri.toString();
+    const dirty: SyncFile[] = [];
+    for (const uri of uris) {
+      // The active buffer travels with every convert request; its disk
+      // copy may be stale mid-edit.
+      if (uri.toString() === activeUri) continue;
+      let stat: vscode.FileStat;
+      try {
+        stat = await vscode.workspace.fs.stat(uri);
+      } catch {
+        continue;
+      }
+      if (stat.size > MAX_SYNC_FILE_BYTES) continue;
+      const rel = vscode.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
+      if (this.syncedMtimes.get(rel) === stat.mtime) continue;
+      try {
+        const bytes = await vscode.workspace.fs.readFile(uri);
+        dirty.push({ path: rel, bytes });
+        this.syncedMtimes.set(rel, stat.mtime);
+      } catch (error) {
+        this.output.appendLine(
+          `workspace sync: reading ${rel} failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    if (dirty.length > 0) {
+      await session.syncFiles(dirty);
+      this.output.appendLine(`workspace sync: pushed ${dirty.length} file(s)`);
+    }
+  }
+
+  private readonly syncedMtimes = new Map<string, number>();
 
   private async createProvider(): Promise<ConversionProvider> {
     try {
@@ -173,6 +235,9 @@ class Ar5ivExtensionApp {
     let request: NormalizedConvertRequest;
     try {
       await this.ensureSession(document);
+      // Cheap stat-diff pass: pick up sibling edits/saves since the last
+      // convert (the active buffer itself travels in the request).
+      await this.syncWorkspaceFiles(document);
       request = buildConvertRequest(++this.requestSeq, document, cursor);
       this.preview.renderPending(request);
       const response = await this.session!.convert(request);

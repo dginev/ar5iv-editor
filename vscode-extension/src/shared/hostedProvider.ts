@@ -6,7 +6,7 @@ import type {
   ProjectHandle,
 } from "./conversionTypes";
 import { fatalResponse } from "./conversionTypes";
-import type { ConversionProvider, ConversionSession } from "./conversionProvider";
+import type { ConversionProvider, ConversionSession, SyncFile } from "./conversionProvider";
 
 const HEADER_USER = "x-ar5iv-user";
 
@@ -17,6 +17,28 @@ const HEADER_USER = "x-ar5iv-user";
 // of leaving the seed in place and rendering "Hello, world!". This is the
 // single-active-file model; multi-file workspace sync is a separate feature.
 const REMOTE_ENTRY = "main.tex";
+
+/** Normalize a workspace-relative path for the session file routes:
+ *  forward slashes, no leading slash, no `..` segments (anything
+ *  suspicious returns undefined and the caller skips/falls back). */
+function sanitizeRemotePath(path: string | undefined): string | undefined {
+  if (!path) return undefined;
+  const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!normalized || normalized.split("/").some((seg) => seg === ".." || seg === "")) {
+    return undefined;
+  }
+  return normalized;
+}
+
+/** FNV-1a over bytes — cheap change detection for sync skip. */
+function fnv1a(bytes: Uint8Array): number {
+  let hash = 0x811c9dc5;
+  for (const byte of bytes) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
 
 interface UserEnvelope {
   readonly user_id: string;
@@ -194,9 +216,15 @@ class HostedConversionSession implements ConversionSession {
 
   async convert(request: NormalizedConvertRequest): Promise<NormalizedConvertResponse> {
     const sentAt = Date.now();
+    // Convert under the document's REAL workspace-relative path (untitled
+    // docs fall back to the fixed entry name). The fixed-name shortcut made
+    // every multi-file project single-file server-side: siblings synced via
+    // syncFiles could never be \input-resolved against an entry that had
+    // been renamed to main.tex.
+    const remotePath = sanitizeRemotePath(request.activeFile) ?? REMOTE_ENTRY;
     let version: number;
     try {
-      const ack = await this.putText(REMOTE_ENTRY, request.text);
+      const ack = await this.putText(remotePath, request.text);
       version = ack.version;
     } catch (error) {
       return fatalResponse(request, error instanceof Error ? error.message : String(error));
@@ -204,7 +232,7 @@ class HostedConversionSession implements ConversionSession {
 
     const wireRequest: WireConvertRequest = {
       id: request.id,
-      active_file: REMOTE_ENTRY,
+      active_file: remotePath,
       version,
       preamble: request.preamble,
       profile: request.profile ?? "fragment",
@@ -221,6 +249,42 @@ class HostedConversionSession implements ConversionSession {
   }
 
   async dispose(): Promise<void> {}
+
+  /** Push workspace siblings, skipping bytes the server already has
+   *  (FNV-1a content hash per path). Failures are per-file and non-fatal:
+   *  a missing sibling degrades that \input, not the whole preview. */
+  async syncFiles(files: readonly SyncFile[]): Promise<void> {
+    for (const file of files) {
+      const path = sanitizeRemotePath(file.path);
+      if (!path) continue;
+      const hash = fnv1a(file.bytes);
+      if (this.syncedHashes.get(path) === hash) continue;
+      try {
+        await this.putBytes(path, file.bytes);
+        this.syncedHashes.set(path, hash);
+      } catch (error) {
+        console.warn(`ar5iv: sync of ${path} failed:`, error);
+      }
+    }
+  }
+
+  private readonly syncedHashes = new Map<string, number>();
+
+  private async putBytes(path: string, bytes: Uint8Array): Promise<WriteAck> {
+    const response = await fetch(this.httpUrl(`/api/session/${this.session.id}/files/${encodePath(path)}`), {
+      method: "PUT",
+      headers: {
+        [HEADER_USER]: this.userId,
+        "content-type": "application/octet-stream",
+      },
+      body: bytes as unknown as BodyInit,
+      credentials: this.credentials,
+    });
+    if (!response.ok) {
+      throw new Error(`PUT ${path} failed: ${response.status} ${await response.text()}`);
+    }
+    return (await response.json()) as WriteAck;
+  }
 
   private async putText(path: string, text: string): Promise<WriteAck> {
     const response = await fetch(this.httpUrl(`/api/session/${this.session.id}/files/${encodePath(path)}`), {
