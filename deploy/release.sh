@@ -452,6 +452,18 @@ LIST=$(curl -fsS "http://127.0.0.1:$SMOKE_PORT/api/session/$SESSION_ID/files" \
 echo "$LIST" | grep -q 'main.tex' || die "session lifecycle failed (got: $LIST)"
 ok "session lifecycle ok (user → session → put → list)"
 
+# Warm LSP pool: the runtime image must carry the latexml_oxide engine
+# (deploy commit a1ae2c9) and the server must have resolved it at boot.
+# Without this assert, a missing engine degrades EVERY conversion to the
+# cold in-process lane with only a startup warn nobody reads — the
+# silent-cold failure class this release exists to eliminate.
+POOL_LOG=$(docker logs "$SMOKE_NAME" 2>&1 || true)
+echo "$POOL_LOG" | grep -q "LSP engine pool:" \
+    || die "warm LSP pool did not initialize (engine missing from image?) — startup log: $(echo "$POOL_LOG" | head -5)"
+echo "$POOL_LOG" | grep -qi "warm LSP pool is DISABLED" \
+    && die "warm LSP pool explicitly DISABLED at startup — engine resolution failed in the image"
+ok "warm LSP pool initialized (engine present in image)"
+
 # Convert round-trip: prove the engine actually renders something. The
 # kernel dumps load lazily on the first conversion; the dump-file ls
 # above proves the files exist on disk, but only this round-trip
