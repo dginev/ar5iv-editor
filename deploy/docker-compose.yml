@@ -49,6 +49,17 @@ services:
       # HOME=/nonexistent is unwritable; set this so converted user content
       # can never start lingering across sessions if HOME ever changes.
       LATEXML_GRAPHICS_CACHE_OFF: "1"
+      # Warm LSP engine pool (one latexml_oxide --server child per active
+      # session; the engine binary ships in the image at /usr/local/bin).
+      # Tuned for the 1536m cgroup BELOW, which also absorbs the 512 MB
+      # session tmpfs: ONE warm child (~200 MB warm RSS) fits; the dev
+      # default of 4 would OOM the whole container. Bump on bigger tiers
+      # (4 GB box: pool 2, ceiling 1024).
+      AR5IV_LSP_POOL: "1"
+      # Per-child RSS ceiling (MiB): the child's own Watchdog kills a
+      # runaway conversion (exit 137, clean per-request failure + respawn)
+      # BEFORE the container's cgroup OOM-kills server+sessions wholesale.
+      AR5IV_LSP_MAX_MEMORY_MB: "768"
     volumes:
       - ar5iv-sessions:/var/ar5iv-sessions
     # No `cpuset` pin. A bare `cpuset: "0"` confines the container to a single
