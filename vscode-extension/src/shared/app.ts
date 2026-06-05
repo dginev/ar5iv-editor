@@ -6,8 +6,15 @@ import type { ConversionProvider, ConversionSession } from "./conversionProvider
  *  (200 files / 100 MB) and skip oversized assets rather than fail. */
 const MAX_SYNC_FILES = 150;
 const MAX_SYNC_FILE_BYTES = 20 * 1024 * 1024;
+
+/** Text files worth streaming to a hosted session on buffer edits. */
+const PROJECT_TEXT_EXTENSIONS = /\.(tex|ltx|sty|cls|bib|bbl|bst|cfg|clo|def)$/i;
+function isProjectTextFile(document: vscode.TextDocument): boolean {
+  if (document.uri.scheme === "untitled") return false;
+  return PROJECT_TEXT_EXTENSIONS.test(document.uri.path) || isLatexDocument(document);
+}
 import { ConversionUnavailableError } from "./conversionProvider";
-import { buildConvertRequest, isLatexDocument, workspaceRootFor } from "./documentModel";
+import { buildConvertRequest, isLatexDocument, providerPathFor, workspaceRootFor } from "./documentModel";
 import type { SyncFile } from "./conversionProvider";
 import { DiagnosticPublisher } from "./diagnostics";
 import { Debouncer } from "./debounce";
@@ -124,16 +131,46 @@ class Ar5ivExtensionApp {
   }
 
   private onDidChangeTextDocument(event: vscode.TextDocumentChangeEvent): void {
-    if (!this.activeDocument || event.document.uri.toString() !== this.activeDocument.uri.toString()) {
+    if (!this.activeDocument) return;
+    const changed = event.document;
+    if (changed.uri.toString() === this.activeDocument.uri.toString()) {
+      this.debouncer.schedule(() => {
+        const editor = vscode.window.visibleTextEditors.find(
+          (candidate) => candidate.document.uri.toString() === changed.uri.toString(),
+        );
+        void this.convertNow(editor?.selection.active);
+      });
       return;
     }
-    this.debouncer.schedule(() => {
-      const editor = vscode.window.visibleTextEditors.find(
-        (candidate) => candidate.document.uri.toString() === event.document.uri.toString(),
-      );
-      void this.convertNow(editor?.selection.active);
-    });
+    // Sibling project file edited. Two deployments, two behaviors:
+    //  * LOCAL engine (desktop): the engine reads the workspace from disk —
+    //    no copying, nothing to do (the session has no syncFiles).
+    //  * HOSTED (web /vscode): the cloud session is canonical after the
+    //    one-time initial upload; sibling BUFFER edits stream to it (and
+    //    refresh the preview), debounced through the same pipeline as
+    //    active-buffer edits.
+    if (!this.session?.syncFiles) return;
+    if (!isProjectTextFile(changed)) return;
+    this.dirtySiblings.set(changed.uri.toString(), changed);
+    this.debouncer.schedule(() => void this.convertNow(this.lastCursor));
   }
+
+  /** Stream edited sibling buffers to a hosted session (cloud-canonical
+   *  model). The active buffer is NOT pushed here — it travels with every
+   *  convert request. No-op on local-engine sessions. */
+  private async pushDirtySiblings(): Promise<void> {
+    const session = this.session;
+    if (!session?.syncFiles || this.dirtySiblings.size === 0) return;
+    const encoder = new TextEncoder();
+    const files = [...this.dirtySiblings.values()].map((doc) => ({
+      path: providerPathFor(doc),
+      bytes: encoder.encode(doc.getText()),
+    }));
+    this.dirtySiblings.clear();
+    await session.syncFiles(files);
+  }
+
+  private readonly dirtySiblings = new Map<string, vscode.TextDocument>();
 
   private onDidCloseDocument(document: vscode.TextDocument): void {
     if (this.activeDocument?.uri.toString() === document.uri.toString()) {
@@ -162,12 +199,15 @@ class Ar5ivExtensionApp {
     await this.syncWorkspaceFiles(document);
   }
 
-  /** Push the workspace's project files (TeX sources, bibliographies,
-   *  figures) to a remote session so `\input`/`\includegraphics`
-   *  siblings resolve server-side. No-op for local-engine sessions (no
-   *  `syncFiles`) and for documents outside a workspace. Stat-diffed:
-   *  only files whose mtime changed since the last pass are re-read and
-   *  re-pushed, so the per-convert cost is one stat per project file. */
+  /** ONE-TIME initial upload of the workspace's project files (TeX
+   *  sources, bibliographies, figures) to a hosted session, so
+   *  `\input`/`\includegraphics` siblings resolve server-side. Runs at
+   *  session open only — afterwards the CLOUD session is canonical and
+   *  sibling edits stream as buffer pushes (`pushDirtySiblings`), never
+   *  directory re-walks. No-op for local-engine sessions (no
+   *  `syncFiles`: the engine reads the workspace from disk, no copying)
+   *  and for documents outside a workspace. Known gap: binary assets
+   *  added AFTER session open are not picked up (re-open the preview). */
   private async syncWorkspaceFiles(document: vscode.TextDocument): Promise<void> {
     const session = this.session;
     if (!session?.syncFiles) return;
@@ -235,9 +275,7 @@ class Ar5ivExtensionApp {
     let request: NormalizedConvertRequest;
     try {
       await this.ensureSession(document);
-      // Cheap stat-diff pass: pick up sibling edits/saves since the last
-      // convert (the active buffer itself travels in the request).
-      await this.syncWorkspaceFiles(document);
+      await this.pushDirtySiblings();
       request = buildConvertRequest(++this.requestSeq, document, cursor);
       this.preview.renderPending(request);
       const response = await this.session!.convert(request);
