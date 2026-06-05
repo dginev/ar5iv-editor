@@ -48,8 +48,31 @@ async fn main() -> anyhow::Result<()> {
 
     let examples = Arc::new(ExampleCatalog::load().context("loading examples manifest")?);
 
+    // Warm engine pool: one `latexml_oxide --server` child per active
+    // session (document-profile conversions ride its warm-preamble fork
+    // cache). Disabled — LOUDLY — when no engine binary resolves; silent
+    // lane degradation is how stale-engine bugs hide.
+    let pool = match ar5iv_editor::lsp_pool::resolve_engine() {
+        Some(engine) => Some(Arc::new(ar5iv_editor::lsp_pool::LspPool::new(
+            ar5iv_editor::lsp_pool::LspPoolConfig {
+                engine,
+                capacity: cfg.engine.pool_capacity,
+                timeout_secs: cfg.engine.timeout_secs,
+                max_memory_mb: cfg.engine.max_memory_mb,
+                idle_reap_secs: cfg.engine.idle_reap_secs,
+            },
+        ))),
+        None => {
+            tracing::warn!(
+                "no latexml_oxide engine found (AR5IV_LATEXML_BIN unset, not on PATH): \
+                 the warm LSP pool is DISABLED and every conversion runs cold in-process"
+            );
+            None
+        }
+    };
+
     let state = AppState {
-        converter: Arc::new(Converter::new(cfg.max_in_flight)),
+        converter: Arc::new(Converter::new(cfg.max_in_flight, pool)),
         sessions,
         examples,
         vscode_web_dir: Arc::new(cfg.vscode_web_dir.clone()),

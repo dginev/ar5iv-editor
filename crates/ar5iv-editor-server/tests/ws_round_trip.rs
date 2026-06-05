@@ -35,7 +35,7 @@ async fn ws_convert_round_trips_through_engine() {
         quota_users_per_ip:      16,
     };
     let state = AppState {
-        converter: Arc::new(Converter::new(2)),
+        converter: Arc::new(Converter::new(2, None)),
         sessions:  Arc::new(SessionRegistry::new(session_cfg)),
         examples:  Arc::new(ExampleCatalog::load().expect("examples manifest")),
         vscode_web_dir: Arc::new(std::path::PathBuf::from("vscode-web")),
@@ -145,7 +145,7 @@ async fn ws_resolves_input_against_session_dir() {
         quota_users_per_ip:      16,
     };
     let state = AppState {
-        converter: Arc::new(Converter::new(2)),
+        converter: Arc::new(Converter::new(2, None)),
         sessions:  Arc::new(SessionRegistry::new(session_cfg)),
         examples:  Arc::new(ExampleCatalog::load().expect("examples manifest")),
         vscode_web_dir: Arc::new(std::path::PathBuf::from("vscode-web")),

@@ -7,6 +7,7 @@ pub mod convert;
 pub mod error;
 pub mod examples;
 pub mod files;
+pub mod lsp_pool;
 pub mod quota;
 pub mod routes;
 pub mod session;

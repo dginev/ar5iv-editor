@@ -77,7 +77,7 @@ impl Rig {
         };
         let sessions = Arc::new(SessionRegistry::new(cfg));
         let state = AppState {
-            converter: Arc::new(Converter::new(1)),
+            converter: Arc::new(Converter::new(1, None)),
             sessions:  sessions.clone(),
             examples:  Arc::new(ExampleCatalog::load().expect("examples manifest")),
             vscode_web_dir: Arc::new(std::path::PathBuf::from("vscode-web")),
@@ -243,7 +243,7 @@ async fn converter_confines_writes_to_the_session_dir() {
         quota_users_per_ip:      16,
     };
     let sessions = Arc::new(SessionRegistry::new(cfg));
-    let converter = Converter::new(1);
+    let converter = Converter::new(1, None);
 
     // One session, seeded blank, then loaded with a doc that pulls in a
     // graphic so the post-processor has something to emit.

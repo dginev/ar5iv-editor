@@ -41,10 +41,14 @@ enum Job {
 
 pub struct Converter {
     tx: std_mpsc::Sender<Job>,
+    /// Warm engine pool (`latexml_oxide --server` child per session).
+    /// `None` when no engine binary was found at startup — conversions
+    /// then run on the in-process worker thread below.
+    pool: Option<Arc<crate::lsp_pool::LspPool>>,
 }
 
 impl Converter {
-    pub fn new(_max_in_flight: usize) -> Self {
+    pub fn new(_max_in_flight: usize, pool: Option<Arc<crate::lsp_pool::LspPool>>) -> Self {
         // `_max_in_flight` is ignored: the latexml-oxide engine relies on
         // process-wide globals, TLS state, and `Rc<...>` graphs, so it must
         // run on exactly one dedicated thread. Concurrent requests are
@@ -60,11 +64,25 @@ impl Converter {
             .spawn(move || worker_main(rx))
             .expect("spawn latexml-oxide worker thread");
 
-        Self { tx }
+        Self { tx, pool }
     }
 
     pub async fn convert(&self, req: ConvertRequest, session: Arc<Session>) -> ConvertResponse {
         let id = req.id;
+
+        // DOCUMENT-profile conversions ride the warm LSP pool: that is the
+        // expensive case (full preamble) where the engine's warm-fork cache
+        // turns seconds into tens of milliseconds per edit, with hard
+        // watchdogs and mid-flight preemption for free. Fragment/math
+        // profiles keep the in-process path until the LSP protocol grows
+        // profile/preamble params (the engine wraps those in a synthetic
+        // standard preamble the `--server` mode does not yet speak).
+        if let Some(pool) = &self.pool
+            && let Some(resp) = self.convert_via_pool(pool.clone(), &req, &session).await
+        {
+            return resp;
+        }
+
         let (resp_tx, resp_rx) = oneshot::channel();
         if self.tx.send(Job::Convert(req, session, resp_tx)).is_err() {
             return ConvertResponse::fatal(id, "converter worker has died");
@@ -73,6 +91,92 @@ impl Converter {
             Ok(resp) => resp,
             Err(_) => ConvertResponse::fatal(id, "converter worker dropped the response"),
         }
+    }
+
+    /// Try the warm-pool lane. `None` means "not this lane" (wrong profile,
+    /// engine error, …) and the caller falls back to the in-process worker;
+    /// `Some` is a final answer (including session-expired).
+    async fn convert_via_pool(
+        &self,
+        pool: Arc<crate::lsp_pool::LspPool>,
+        req: &ConvertRequest,
+        session: &Arc<Session>,
+    ) -> Option<ConvertResponse> {
+        let id = req.id;
+        // Custom preamble/preload need the in-process profile machinery.
+        if req.preamble.is_some() || !req.preload.is_empty() {
+            return None;
+        }
+        let abs_path = session.resolve(&req.active_file).ok()?;
+        let tex = match tokio::fs::read_to_string(&abs_path).await {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !session.dir.exists() => {
+                return Some(ConvertResponse::session_expired(id));
+            }
+            Err(_) => return None, // worker lane reports the read error
+        };
+        // Same promotion rule as `convert_one`: a file with its own
+        // `\documentclass` is a full document — exactly what the LSP
+        // server's preamble/body model speaks.
+        let is_document = matches!(req.profile.as_deref(), Some("document"))
+            || (matches!(req.profile.as_deref().unwrap_or("fragment"), "fragment")
+                && contains_documentclass(&tex));
+        if !is_document {
+            return None;
+        }
+
+        let t_total = Instant::now();
+        let out = match pool.convert(&session.dir, &abs_path, &tex).await {
+            Ok(out) => out,
+            Err(e) => {
+                // Loud fallback: a degraded lane must never be silent.
+                error!("LSP pool conversion failed ({e}); falling back to in-process worker");
+                return None;
+            }
+        };
+        let total_ms = t_total.elapsed().as_millis() as u64;
+
+        // Frontend contract: the worker lane answers stale frames with
+        // status "superseded"; the engine's preemption answers "cancelled".
+        // Same meaning, keep the wire word stable.
+        let status = if out.status == "cancelled" {
+            "superseded".to_string()
+        } else {
+            out.status
+        };
+        let html = if out.html.is_empty() {
+            String::new()
+        } else {
+            rewrite_session_paths(&out.html, &session.dir, &session.id.to_string())
+        };
+        let diagnostics = parse_diagnostics(&out.log);
+        // Basenames only (anonymity: session-tmpdir paths stay on the box),
+        // lowercased for the client's case-insensitive active_file match.
+        let sources: Vec<String> = out.sources.iter().map(|s| path_basename(s)).collect();
+
+        tracing::debug!(
+            "[convert id={id}] lsp-pool total={total_ms} ms  tex={} B  out={} B",
+            tex.len(),
+            html.len(),
+        );
+        Some(ConvertResponse {
+            id,
+            result: html,
+            status,
+            status_code: out.status_code as i32,
+            version: req.version,
+            log: out.log,
+            // The pool sees one opaque engine round-trip; per-phase
+            // timings stay zero rather than inventing numbers.
+            timings: Some(Timings {
+                build_us: 0,
+                convert_ms: total_ms,
+                post_ms: 0,
+                total_ms,
+            }),
+            diagnostics,
+            sources,
+        })
     }
 
     /// Convert the session's project into a self-contained ZIP bundle
@@ -856,7 +960,7 @@ Warn:Recovery:something Patched up after the error\n\
         )
         .unwrap();
 
-        let c = Converter::new(1);
+        let c = Converter::new(1, None);
         let resp = c
             .convert(
                 ConvertRequest {
@@ -959,7 +1063,7 @@ Warn:Recovery:something Patched up after the error\n\
         let session = make_test_session(dir.path().to_path_buf());
         std::fs::write(dir.path().join("main.tex"), r"\(x^2 + y^2 = z^2\)").unwrap();
 
-        let c = Converter::new(1);
+        let c = Converter::new(1, None);
         let resp = c
             .convert(
                 ConvertRequest {
@@ -1028,7 +1132,7 @@ Warn:Recovery:something Patched up after the error\n\
         let session = make_test_session(dir.path().to_path_buf());
 
         let t_boot = Instant::now();
-        let c = Converter::new(1);
+        let c = Converter::new(1, None);
         eprintln!("[boot] worker spawn = {} µs", t_boot.elapsed().as_micros());
 
         for (i, (label, tex)) in inputs.iter().enumerate() {

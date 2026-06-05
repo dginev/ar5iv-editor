@@ -29,7 +29,7 @@ impl TestRig {
         let temp = TempDir::new().unwrap();
         let cfg = SessionConfig { sessions_dir: temp.path().to_path_buf(), ..cfg };
         let state = AppState {
-            converter: Arc::new(Converter::new(1)),
+            converter: Arc::new(Converter::new(1, None)),
             sessions:  Arc::new(SessionRegistry::new(cfg)),
             examples:  Arc::new(ExampleCatalog::load().expect("examples manifest")),
             vscode_web_dir: Arc::new(std::path::PathBuf::from("vscode-web")),

@@ -48,7 +48,7 @@ async fn includegraphics_resolves_and_path_is_rewritten() {
         quota_users_per_ip:      16,
     };
     let state = AppState {
-        converter: Arc::new(Converter::new(2)),
+        converter: Arc::new(Converter::new(2, None)),
         sessions:  Arc::new(SessionRegistry::new(cfg)),
         examples:  Arc::new(ExampleCatalog::load().expect("examples manifest")),
         vscode_web_dir: Arc::new(std::path::PathBuf::from("vscode-web")),

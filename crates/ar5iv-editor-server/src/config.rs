@@ -22,6 +22,36 @@ pub struct Config {
     /// + bundled `media/`).
     pub vscode_ext_dir: PathBuf,
     pub session: SessionConfig,
+    pub engine: EngineConfig,
+}
+
+/// Tunables for the warm LSP engine pool (`lsp_pool`). The engine binary
+/// itself resolves at startup (`AR5IV_LATEXML_BIN` → `$PATH`); when
+/// absent the pool is disabled and conversions use the in-process
+/// worker — loudly, never silently (see `main.rs`).
+#[derive(Debug, Clone)]
+pub struct EngineConfig {
+    /// Warm children kept alive at once (~200 MB RSS each when warm).
+    pub pool_capacity: usize,
+    /// Per-conversion wall-clock budget (`--timeout`) per child.
+    pub timeout_secs: u64,
+    /// Per-conversion RSS ceiling in MiB (`--max-memory`) per child.
+    pub max_memory_mb: u64,
+    /// Idle children older than this are reaped (mirrors session expiry).
+    pub idle_reap_secs: u64,
+}
+
+impl EngineConfig {
+    fn load_from_env() -> anyhow::Result<Self> {
+        Ok(Self {
+            pool_capacity:  env_usize("AR5IV_LSP_POOL", 4)?,
+            timeout_secs:   env_u64("AR5IV_LSP_TIMEOUT_SECS", 60)?,
+            max_memory_mb:  env_u64("AR5IV_LSP_MAX_MEMORY_MB", 6144)?,
+            // Default mirrors the session idle timeout (600 s): a child
+            // whose session expired has nothing left to be warm for.
+            idle_reap_secs: env_u64("AR5IV_LSP_IDLE_REAP_SECS", 600)?,
+        })
+    }
 }
 
 /// Tunables for the session registry, file routes, and the GC loop.
@@ -101,6 +131,7 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("vscode-extension"));
         let session = SessionConfig::load_from_env()?;
+        let engine = EngineConfig::load_from_env()?;
         Ok(Self {
             bind,
             max_in_flight,
@@ -109,6 +140,7 @@ impl Config {
             vscode_web_dir,
             vscode_ext_dir,
             session,
+            engine,
         })
     }
 }
