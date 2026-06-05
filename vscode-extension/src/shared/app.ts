@@ -85,7 +85,71 @@ class Ar5ivExtensionApp {
     );
     this.context.subscriptions.push(this);
     this.context.subscriptions.push(...this.disposables);
-    void this.maybeOpenDemoSample();
+    void this.maybeWelcome();
+  }
+
+  /** Startup UX. The product decision (any deployment): /vscode leads
+   *  with MOUNTING A LOCAL FOLDER — edit real files, preview through the
+   *  cloud session, saves write back to the local disk (web: browser
+   *  File System Access mount + autoSave; desktop: plain disk). The demo
+   *  sample is the fallback (and the only option on browsers without
+   *  the FS Access API, i.e. non-Chromium). */
+  private async maybeWelcome(): Promise<void> {
+    if (this.runtime.capabilities.deployment !== "web") {
+      await this.maybeOpenDemoSample();
+      return;
+    }
+    if (vscode.workspace.workspaceFolders?.length) {
+      // A folder is already mounted (e.g. the post-picker reload):
+      // open its main TeX file with the preview beside it.
+      await this.maybeAutoPreview();
+      return;
+    }
+    if (vscode.window.visibleTextEditors.some((editor) => isLatexDocument(editor.document))) return;
+    const canMount = this.runtime.capabilities.canMountLocalFolder;
+    const openFolder = "Open Local Folder…";
+    const trySample = "Try a Sample";
+    const choice = await vscode.window.showInformationMessage(
+      canMount
+        ? "ar5iv: open a LOCAL LaTeX folder — edit and preview here, saves write back to your disk."
+        : "ar5iv: mounting a local folder needs a Chromium-based browser; you can still try the sample.",
+      ...(canMount ? [openFolder, trySample] : [trySample]),
+    );
+    if (choice === openFolder) {
+      // Triggers the browser directory picker; the workbench reloads
+      // with the folder mounted and activation lands in maybeAutoPreview.
+      await vscode.commands.executeCommand("workbench.action.files.openFolder");
+    } else if (choice === trySample) {
+      await this.openDemoSample();
+    }
+  }
+
+  /** With a mounted folder: open the most main-looking `.tex` and the
+   *  preview beside it, so mount → editing+preview is one gesture. */
+  private async maybeAutoPreview(): Promise<void> {
+    if (vscode.window.visibleTextEditors.some((editor) => isLatexDocument(editor.document))) return;
+    let candidates: vscode.Uri[];
+    try {
+      candidates = await vscode.workspace.findFiles("**/*.tex", "**/{node_modules,.git}/**", 50);
+    } catch {
+      return;
+    }
+    if (candidates.length === 0) return;
+    const shallowest = (a: vscode.Uri, b: vscode.Uri) =>
+      a.path.split("/").length - b.path.split("/").length || a.path.localeCompare(b.path);
+    const main =
+      candidates.find((uri) => /(^|\/)main\.tex$/i.test(uri.path)) ??
+      [...candidates].sort(shallowest)[0];
+    if (!main) return;
+    try {
+      const document = await vscode.workspace.openTextDocument(main);
+      await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.One, preview: false });
+      await this.openPreview();
+    } catch (error) {
+      this.output.appendLine(
+        `auto-preview failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /** For the hosted `/vscode` web demo (gated by `ar5iv.demoSampleOnStartup`):
@@ -95,6 +159,10 @@ class Ar5ivExtensionApp {
   private async maybeOpenDemoSample(): Promise<void> {
     if (!vscode.workspace.getConfiguration("ar5iv").get<boolean>("demoSampleOnStartup", false)) return;
     if (vscode.window.visibleTextEditors.some((editor) => isLatexDocument(editor.document))) return;
+    await this.openDemoSample();
+  }
+
+  private async openDemoSample(): Promise<void> {
     try {
       const document = await vscode.workspace.openTextDocument({ language: "latex", content: DEMO_SAMPLE });
       await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.One, preview: false });

@@ -141,7 +141,10 @@ fn workbench_config_json(scheme: &str, authority: &str, origin: &str) -> String 
         // surfaces match light/dark when browsing.
         "configurationDefaults": {
             "ar5iv.backendUrl": origin,
-            "ar5iv.demoSampleOnStartup": true,
+            // No demo-sample auto-open: the extension's welcome flow leads
+            // with "Open Local Folder…" (mount a REAL local directory; edits
+            // preview through the cloud session and saves write back to the
+            // local disk), offering the sample as the fallback button.
             "workbench.startupEditor": "none",
             "editor.minimap.enabled": false,
             "window.menuBarVisibility": "hidden"

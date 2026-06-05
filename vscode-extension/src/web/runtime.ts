@@ -9,6 +9,8 @@ export async function createRuntimeServices(context: vscode.ExtensionContext): P
       canLoadNativeConverter: false,
       canRunExecutableFallback: false,
       canUseHostedBackend: true,
+      canMountLocalFolder:
+        typeof (globalThis as { showDirectoryPicker?: unknown }).showDirectoryPicker === "function",
       defaultBackendUrl: "https://latexml.rs",
     },
     createConversionProvider: async () => {

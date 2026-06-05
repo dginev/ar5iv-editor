@@ -6,6 +6,9 @@ export interface RuntimeCapabilities {
   readonly canLoadNativeConverter: boolean;
   readonly canRunExecutableFallback: boolean;
   readonly canUseHostedBackend: boolean;
+  /** Browser File System Access API available (Chromium): the workbench
+   *  can mount a REAL local folder, with saves writing back to disk. */
+  readonly canMountLocalFolder: boolean;
   readonly defaultBackendUrl?: string;
 }
 
