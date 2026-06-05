@@ -137,7 +137,11 @@ async fn document_profile_rides_the_warm_pool_over_ws() {
             preamble: None,
             profile: Some("document".into()),
             format: Some("html5".into()),
-            preload: vec![],
+            // Byte-for-byte what the frontend sends for \documentclass
+            // documents (frontend-core PRELOAD_AR5IV_ONLY) — the engine's
+            // own --server default. MUST ride the pool; rejecting it was
+            // the live routing bug.
+            preload: vec!["ar5iv.sty".into()],
         };
         serde_json::to_string(&req).unwrap()
     };

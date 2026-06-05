@@ -410,6 +410,10 @@ impl LspPool {
     }
 
     async fn spawn_child(&self, session_dir: &Path) -> Result<Arc<PooledChild>, LspError> {
+        // INFO, once per child: the warm lane engaging (or not) must be
+        // visible at default log level — a silently-cold lane already
+        // masked one routing bug (the preload gate).
+        info!("spawning warm LSP child for {}", session_dir.display());
         let mut child = Command::new(&self.cfg.engine)
             .arg("--server")
             .arg("--timeout")

@@ -103,8 +103,15 @@ impl Converter {
         session: &Arc<Session>,
     ) -> Option<ConvertResponse> {
         let id = req.id;
-        // Custom preamble/preload need the in-process profile machinery.
-        if req.preamble.is_some() || !req.preload.is_empty() {
+        // Custom preamble/preload need the in-process profile machinery —
+        // EXCEPT `["ar5iv.sty"]`, which is byte-for-byte the engine's own
+        // `--server` default preload (`make_config`) and exactly what the
+        // frontend sends for every `\documentclass` document. Rejecting it
+        // silently routed ALL real documents to the cold worker (caught
+        // live: reconversion times equal to cold).
+        let preload_is_engine_default =
+            req.preload.is_empty() || req.preload == ["ar5iv.sty"];
+        if req.preamble.is_some() || !preload_is_engine_default {
             return None;
         }
         let abs_path = session.resolve(&req.active_file).ok()?;
