@@ -108,11 +108,23 @@ WORKDIR /build/ar5iv-editor
 # BuildKit instance) cargo only re-builds what actually changed. The
 # `target/` cache is per-crate-version, the registry cache holds
 # already-downloaded crate sources.
+# Two binaries come out of this stage:
+#  * ar5iv-editor        — the web server (path-deps on latexml-oxide)
+#  * latexml_oxide       — the ENGINE the warm LSP pool spawns per
+#    session (`lsp_pool.rs`). Without it in the runtime image the pool
+#    is DISABLED at startup (loud warn) and every conversion runs cold
+#    in-process — the exact silent-degradation failure the pool's
+#    design forbids. The cache mount over latexml-oxide/target also
+#    shadows any host-leaked target/ from the COPY above.
 RUN --mount=type=cache,target=/build/ar5iv-editor/target,sharing=locked,id=ar5iv-editor-target \
+    --mount=type=cache,target=/build/latexml-oxide/target,sharing=locked,id=latexml-oxide-target-release \
     --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked,id=cargo-registry \
     if [ "$CARGO_JOBS" != 0 ]; then export CARGO_BUILD_JOBS="$CARGO_JOBS"; fi && \
     cargo build --release -p ar5iv-editor-server && \
-    cp target/release/ar5iv-editor /tmp/ar5iv-editor
+    cp target/release/ar5iv-editor /tmp/ar5iv-editor && \
+    cargo build --release --bin latexml_oxide \
+        --manifest-path /build/latexml-oxide/Cargo.toml && \
+    cp /build/latexml-oxide/target/release/latexml_oxide /tmp/latexml_oxide
 
 # --------------------------------------------------------------------
 # Stage: generate the latexml_oxide kernel dumps (`plain.YYYY.dump.txt` +
@@ -227,6 +239,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY --from=builder /tmp/ar5iv-editor /app/ar5iv-editor
+# The warm-pool engine, on PATH so `lsp_pool::resolve_engine` finds it
+# with zero configuration (the explicit env makes the wiring auditable).
+COPY --from=builder /tmp/latexml_oxide /usr/local/bin/latexml_oxide
+ENV AR5IV_LATEXML_BIN=/usr/local/bin/latexml_oxide
 COPY --from=formats /build/latexml-oxide/resources/dumps             /app/dumps
 COPY ar5iv-editor/frontend/dist /app/frontend/dist
 COPY schema-docs                /app/schema-docs
