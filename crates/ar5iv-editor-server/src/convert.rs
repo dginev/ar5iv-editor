@@ -103,15 +103,15 @@ impl Converter {
         session: &Arc<Session>,
     ) -> Option<ConvertResponse> {
         let id = req.id;
-        // Custom preamble/preload need the in-process profile machinery —
-        // EXCEPT `["ar5iv.sty"]`, which is byte-for-byte the engine's own
+        // Preload gate: `["ar5iv.sty"]` is byte-for-byte the engine's own
         // `--server` default preload (`make_config`) and exactly what the
-        // frontend sends for every `\documentclass` document. Rejecting it
-        // silently routed ALL real documents to the cold worker (caught
-        // live: reconversion times equal to cold).
+        // frontend sends for every `\documentclass` document, so it rides
+        // the pool; anything else needs the in-process profile machinery.
+        // (Rejecting the default silently routed ALL real documents to the
+        // cold worker — caught live: reconversion times equal to cold.)
         let preload_is_engine_default =
             req.preload.is_empty() || req.preload == ["ar5iv.sty"];
-        if req.preamble.is_some() || !preload_is_engine_default {
+        if !preload_is_engine_default {
             return None;
         }
         let abs_path = session.resolve(&req.active_file).ok()?;
@@ -131,6 +131,12 @@ impl Converter {
         if !is_document {
             return None;
         }
+        // `req.preamble` is deliberately NOT a gate for document
+        // conversions: the frontend always sends one (it pre-splits for
+        // the fragment-wrapping case), but document-mode semantics ignore
+        // it in the in-process lane too (`resolve_amble`: whatsin=document
+        // → no wrapping). Gating on it routed every real /editor document
+        // to the cold worker — the second silent-cold bug in this lane.
 
         let t_total = Instant::now();
         let out = match pool.convert(&session.dir, &abs_path, &tex).await {

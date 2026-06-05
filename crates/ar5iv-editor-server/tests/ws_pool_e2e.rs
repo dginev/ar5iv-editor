@@ -134,7 +134,10 @@ async fn document_profile_rides_the_warm_pool_over_ws() {
             id,
             active_file: "main.tex".into(),
             version,
-            preamble: None,
+            // The frontend ALWAYS sends a pre-split preamble (for the
+            // fragment-wrapping case); document mode ignores it. Gating on
+            // it was the second silent-cold routing bug.
+            preamble: Some("literal:\\documentclass{article}".into()),
             profile: Some("document".into()),
             format: Some("html5".into()),
             // Byte-for-byte what the frontend sends for \documentclass
