@@ -10,26 +10,6 @@ import type {
   ProjectHandle,
 } from "../shared/conversionTypes";
 import { fatalResponse } from "../shared/conversionTypes";
-import { cachedBinaryPath, downloadReleaseBinary, type ReleaseBinarySpec } from "./binaryDownload";
-
-/// Pinned latexml-oxide release for download-on-activation. Bump per release;
-/// the per-platform asset matrix is gated on RELEASE_CRITERIA.md §11 Stage 1.
-const LATEXML_OXIDE_VERSION = "0.6.2";
-const LATEXML_OXIDE_SPEC: ReleaseBinarySpec = {
-  binaryName: "latexml_oxide",
-  label: "latexml-oxide engine",
-  version: LATEXML_OXIDE_VERSION,
-  releaseBaseUrl: "https://github.com/dginev/latexml-oxide/releases/download",
-  assetName: (v, triple) => `latexml-oxide-${v}-${triple}.tar.gz`,
-  cacheSubdir: "engine",
-  repoUrl: "https://github.com/dginev/latexml-oxide",
-};
-
-let engineOutput: vscode.OutputChannel | undefined;
-function output(): vscode.OutputChannel {
-  if (!engineOutput) engineOutput = vscode.window.createOutputChannel("ar5iv: engine");
-  return engineOutput;
-}
 
 export async function createExecutableProvider(
   context: vscode.ExtensionContext,
@@ -38,7 +18,7 @@ export async function createExecutableProvider(
   if (!executable) {
     throw new ConversionUnavailableError(
       "executable",
-      "No latexml-oxide engine is configured, on PATH, or downloadable for this platform.",
+      "No latexml-oxide engine is configured, bundled with the extension, or on PATH.",
     );
   }
   return new ExecutableFallbackProvider(executable);
@@ -246,10 +226,15 @@ class ExecutableFallbackSession implements ConversionSession {
   }
 }
 
-/// Resolve the latexml-oxide LSP engine. Order (mirrors the ar5iv-editor
-/// server resolution): explicit override → previously-downloaded cache → on
-/// PATH (dev/system) → download the pinned release on first use. The download
-/// is what makes a fresh install turnkey (RELEASE_CRITERIA.md §11 Stage 2).
+/// Resolve the latexml-oxide LSP engine. Order: explicit override
+/// (`ar5iv.latexmlOxidePath` — the dev escape hatch) → the engine BUNDLED
+/// with the extension (`<extension>/bin/latexml_oxide`, packaged into the
+/// vsix: single artifact, extension↔engine version-locked, the
+/// rust-analyzer model) → on PATH (dev/system install). No download step:
+/// the version-pin drift it allowed (extension testing a stale engine)
+/// outweighed the smaller vsix. Linux-only by design — latexml-oxide
+/// builds and is tested on Ubuntu only; other platforms fall back to the
+/// hosted backend in runtime.ts.
 async function resolveExecutablePath(
   context: vscode.ExtensionContext,
 ): Promise<string | undefined> {
@@ -262,9 +247,9 @@ async function resolveExecutablePath(
     return configured;
   }
 
-  // 2. Previously downloaded, cached engine.
-  const cached = cachedBinaryPath(context, LATEXML_OXIDE_SPEC);
-  if (await isExecutable(cached)) return cached;
+  // 2. Bundled engine (shipped inside the vsix).
+  const bundled = path.join(context.extensionPath, "bin", "latexml_oxide");
+  if (await isExecutable(bundled)) return bundled;
 
   // 3. On PATH (dev / system install).
   for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
@@ -272,11 +257,7 @@ async function resolveExecutablePath(
     const candidate = path.join(dir, "latexml_oxide");
     if (await isExecutable(candidate)) return candidate;
   }
-
-  // 4. Download the pinned release on first use.
-  if (!config.get<boolean>("latexmlOxideDownload", true)) return undefined;
-  const baseOverride = config.get<string>("latexmlOxideDownloadBaseUrl", "").trim();
-  return downloadReleaseBinary(context, output(), LATEXML_OXIDE_SPEC, baseOverride || undefined);
+  return undefined;
 }
 
 async function assertExecutable(file: string): Promise<void> {

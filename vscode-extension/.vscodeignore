@@ -5,7 +5,9 @@ scripts/**
 tsconfig.json
 esbuild.*.js
 node_modules/**
-# The conversion backend is NOT bundled: the extension downloads the pinned
-# ar5iv-editor server release on first activation (small VSIX, plug-and-play).
+# The vsix BUNDLES the latexml-oxide LSP engine (bin/latexml_oxide):
+# single artifact, extension<->engine version-locked (rust-analyzer model).
+# Everything else in bin/ stays out.
 bin/**
+!bin/latexml_oxide
 media/preview.js.map

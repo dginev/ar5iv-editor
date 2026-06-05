@@ -6,34 +6,34 @@ import type { RuntimeServices } from "../shared/runtime";
 import type { ConversionProvider } from "../shared/conversionProvider";
 import { ConversionUnavailableError } from "../shared/conversionProvider";
 import { createExecutableProvider } from "./executableProvider";
-import { ManagedAr5ivServer } from "./managedServer";
-import { createNativeProvider } from "./nativeProvider";
 
-type RequestedMode = "auto" | "native" | "executable" | "backend";
+/// Single-engine architecture: the desktop extension converts through the
+/// BUNDLED `latexml_oxide --server` LSP (warm-fork preamble cache,
+/// multi-file project root + unsaved-buffer overlay, per-file diagnostics).
+/// The only other lane is the hosted backend URL — kept strictly as the
+/// fallback for platforms the engine doesn't run on (latexml-oxide builds
+/// and is tested on Ubuntu only) and as a debug escape hatch. The previous
+/// managed-local-server and native-module lanes are gone: the managed
+/// server duplicated the engine behind a second download pin (stale-version
+/// trap), and the in-process native module had no process isolation,
+/// watchdogs, or preemption.
+type RequestedMode = "auto" | "executable" | "backend";
 
 export async function createRuntimeServices(context: vscode.ExtensionContext): Promise<RuntimeServices> {
-  const serverOutput = vscode.window.createOutputChannel("ar5iv Server");
-  const managedServer = new ManagedAr5ivServer(context, serverOutput);
-  context.subscriptions.push({ dispose: () => void managedServer.dispose() });
-  context.subscriptions.push(serverOutput);
-
   return {
     capabilities: {
       deployment: "desktop",
-      canLoadNativeConverter: os.platform() === "linux",
+      canLoadNativeConverter: false,
       canRunExecutableFallback: os.platform() === "linux",
       canUseHostedBackend: true,
       defaultBackendUrl: "https://latexml.rs",
     },
-    createConversionProvider: () => createProvider(context, managedServer),
+    createConversionProvider: () => createProvider(context),
     asWebviewUri: (uri) => uri,
   };
 }
 
-async function createProvider(
-  context: vscode.ExtensionContext,
-  managedServer: ManagedAr5ivServer,
-): Promise<ConversionProvider> {
+async function createProvider(context: vscode.ExtensionContext): Promise<ConversionProvider> {
   const config = vscode.workspace.getConfiguration("ar5iv");
   const requested = config.get<RequestedMode>("conversionMode", "auto");
   const attempts: string[] = [];
@@ -41,21 +41,16 @@ async function createProvider(
   const tryProvider = async (mode: RequestedMode): Promise<ConversionProvider | undefined> => {
     try {
       switch (mode) {
-        case "native":
-          if (config.get<boolean>("disableNativeLatexmlOxide", false)) {
-            throw new ConversionUnavailableError("native", "Native provider is disabled by configuration.");
-          }
-          if (os.platform() !== "linux") {
-            throw new ConversionUnavailableError("native", "Native provider MVP supports Ubuntu/Linux only.");
-          }
-          return await createNativeProvider(context);
         case "executable":
           if (os.platform() !== "linux") {
-            throw new ConversionUnavailableError("executable", "Executable fallback MVP supports Ubuntu/Linux only.");
+            throw new ConversionUnavailableError(
+              "executable",
+              "The latexml-oxide engine supports Ubuntu/Linux only.",
+            );
           }
           return await createExecutableProvider(context);
         case "backend":
-          return await createHostedProvider(context, managedServer);
+          return await createHostedProvider(context);
         case "auto":
           return undefined;
       }
@@ -71,7 +66,13 @@ async function createProvider(
     if (provider) return provider;
   }
 
-  for (const mode of ["backend", "native", "executable"] as const) {
+  // Turnkey default: the bundled LSP engine; hosted backend only when the
+  // engine cannot run here. TODO(remote multi-file): the hosted lane speaks
+  // the single-buffer editor WS protocol today — for full project fidelity
+  // on engine-less platforms, grow a zip-to-zip `latexml.rs/convert`-style
+  // exchange (cortex_worker's archive model: ship the project, get the
+  // converted bundle back).
+  for (const mode of ["executable", "backend"] as const) {
     const provider = await tryProvider(mode);
     if (provider) return provider;
   }
@@ -82,15 +83,9 @@ async function createProvider(
   );
 }
 
-async function createHostedProvider(
-  context: vscode.ExtensionContext,
-  managedServer: ManagedAr5ivServer,
-): Promise<ConversionProvider> {
+async function createHostedProvider(context: vscode.ExtensionContext): Promise<ConversionProvider> {
   const config = vscode.workspace.getConfiguration("ar5iv");
-  const useManagedServer = config.get<boolean>("managedServer.enabled", true);
-  const backendUrl = useManagedServer
-    ? await managedServer.start()
-    : config.get<string>("backendUrl", "https://latexml.rs");
+  const backendUrl = config.get<string>("backendUrl", "https://latexml.rs");
   return new HostedBackendProvider({
     backendUrl,
     webSocket: WebSocket as unknown as WebSocketConstructor,

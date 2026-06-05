@@ -32,8 +32,16 @@
     "languages": [
       {
         "id": "latex",
-        "aliases": ["LaTeX", "latex", "tex"],
-        "extensions": [".tex", ".ltx", ".latex"]
+        "aliases": [
+          "LaTeX",
+          "latex",
+          "tex"
+        ],
+        "extensions": [
+          ".tex",
+          ".ltx",
+          ".latex"
+        ]
       }
     ],
     "commands": [
@@ -49,62 +57,21 @@
           "type": "string",
           "enum": [
             "auto",
-            "native",
             "executable",
             "backend"
           ],
           "default": "auto",
-          "description": "Conversion mode. Auto starts the managed local backend by default, with native and executable modes available for explicit testing."
+          "description": "Conversion mode. Auto uses the bundled latexml-oxide LSP engine (Linux), falling back to the hosted backend URL elsewhere."
         },
         "ar5iv.backendUrl": {
           "type": "string",
           "default": "https://latexml.rs",
-          "description": "Base URL for hosted conversion when the managed local server is disabled."
-        },
-        "ar5iv.managedServer.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Start and stop a bundled local ar5iv-editor server for desktop backend conversion."
-        },
-        "ar5iv.serverPath": {
-          "type": "string",
-          "default": "",
-          "description": "Absolute path to an ar5iv-editor server binary. Empty means use the downloaded binary (or a development target path when running from source)."
-        },
-        "ar5iv.serverDownload": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically download the ar5iv-editor conversion backend on first use when no local binary is configured. Cached in the extension's global storage."
-        },
-        "ar5iv.serverDownloadBaseUrl": {
-          "type": "string",
-          "default": "",
-          "description": "Override the base URL the backend is downloaded from (for forks or local mirrors). Empty uses the official ar5iv-editor GitHub releases."
-        },
-        "ar5iv.nativeLatexmlOxidePath": {
-          "type": "string",
-          "default": "",
-          "description": "Absolute path to a native latexml-oxide module. Empty means bundled or extension-managed."
-        },
-        "ar5iv.disableNativeLatexmlOxide": {
-          "type": "boolean",
-          "default": false,
-          "description": "Disable the native converter and use the next allowed conversion mode."
+          "description": "Base URL for hosted conversion on platforms where the bundled engine cannot run (latexml-oxide is Ubuntu-only)."
         },
         "ar5iv.latexmlOxidePath": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to a latexml-oxide engine (the `latexml_oxide` LSP server). Empty uses the downloaded binary, then PATH."
-        },
-        "ar5iv.latexmlOxideDownload": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically download the latexml-oxide engine on first use when no local binary is configured or on PATH. Cached in the extension's global storage."
-        },
-        "ar5iv.latexmlOxideDownloadBaseUrl": {
-          "type": "string",
-          "default": "",
-          "description": "Override the base URL the latexml-oxide engine is downloaded from (forks or local mirrors). Empty uses the official latexml-oxide GitHub releases."
+          "description": "Absolute path to a latexml-oxide engine (the `latexml_oxide` LSP server). Empty means use the engine bundled with the extension, then PATH."
         },
         "ar5iv.debounceMs": {
           "type": "number",
@@ -124,16 +91,15 @@
   "scripts": {
     "build": "npm run build:assets && npm run build:desktop && npm run build:web && npm run build:preview",
     "build:assets": "mkdir -p media && cp ../frontend/public/css/ar5iv.css media/ar5iv.css && cp ../frontend/public/css/ar5iv-fonts.css media/ar5iv-fonts.css",
-    "build:server": "cargo build --release -p ar5iv-editor-server && mkdir -p bin && cp ../target/release/ar5iv-editor bin/ar5iv-editor",
-    "build:all": "npm run build:server && npm run build",
-    "package:vsix": "npm run build && vsce package --out ar5iv-vscode.vsix",
+    "package:vsix": "npm run build:engine && npm run build && vsce package --out ar5iv-vscode.vsix",
     "build:desktop": "node esbuild.desktop.js",
     "build:web": "node esbuild.web.js",
     "build:preview": "node esbuild.preview.js",
     "fetch:vscode-web": "node scripts/fetch-vscode-web.mjs",
     "typecheck": "tsc --noEmit",
     "test:lsp": "node scripts/test_lsp_integration.js",
-    "watch": "node esbuild.desktop.js --watch"
+    "watch": "node esbuild.desktop.js --watch",
+    "build:engine": "cargo build --release --bin latexml_oxide --manifest-path ../../latexml-oxide/Cargo.toml && mkdir -p bin && cp ../../latexml-oxide/target/release/latexml_oxide bin/latexml_oxide"
   },
   "dependencies": {
     "idiomorph": "^0.7.4",
