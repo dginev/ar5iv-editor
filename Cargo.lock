@@ -1137,6 +1137,7 @@ dependencies = [
  "phf",
  "regex",
  "rustc-hash",
+ "serde_json",
  "tar",
  "tempfile",
  "zip 8.6.0",
