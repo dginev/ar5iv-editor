@@ -18,7 +18,8 @@ use std::sync::Arc;
 
 use axum::{
     Router,
-    routing::{any, get},
+    extract::DefaultBodyLimit,
+    routing::{any, get, post},
 };
 use tower_http::trace::TraceLayer;
 
@@ -49,6 +50,12 @@ pub fn router(state: AppState) -> Router {
         .route("/convert", any(ws::ws_handler))
         .merge(files::router())
         .route("/api/version", get(routes::version))
+        // Validation accepts whole rendered documents; book-sized
+        // LaTeXML HTML runs well past axum's 2 MB default body cap.
+        .route(
+            "/api/validate",
+            post(routes::validate).layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

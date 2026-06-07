@@ -72,9 +72,12 @@ tar = "0.4"
 sha2 = "0.10"
 regex = "1"
 
+# `/api/validate` proxy to the vnu validation service (internal http;
+# rustls kept so an external https validator URL also works).
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+
 [dev-dependencies]
 tokio-tungstenite = "0.24"
 tempfile = "3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 filetime = "0.2"
 zip = { version = "5", default-features = false, features = ["deflate"] }

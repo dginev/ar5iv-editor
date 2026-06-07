@@ -1,12 +1,14 @@
 use askama::Template;
 use axum::{
     Json,
-    extract::State,
+    body::Bytes,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
 };
+use serde::Deserialize;
 
-use ar5iv_editor_protocol::{LatexmlOxideVersion, VersionInfo};
+use ar5iv_editor_protocol::{LatexmlOxideVersion, SchemaSourceVersion, VersionInfo};
 
 use crate::{
     AppState,
@@ -21,6 +23,18 @@ const LATEXML_OXIDE_DATE: &str = env!("LATEXML_OXIDE_DATE");
 /// Public-facing repo URL. Override at run time via
 /// `AR5IV_EDITOR_LATEXML_OXIDE_URL` if you fork the engine.
 const LATEXML_OXIDE_REPO_DEFAULT: &str = "https://github.com/dginev/latexml-oxide";
+/// Captured at build time from `build.rs`. Short SHA of the
+/// `validator` submodule pin (schema source + vnu service build).
+const VALIDATOR_SHA: &str = env!("VALIDATOR_SHA");
+const VALIDATOR_REPO_DEFAULT: &str = "https://github.com/dginev/validator";
+
+/// Default schema preset forwarded to the validation service: the
+/// LaTeXML scholarly profile. Mirrors the preset line registered in
+/// the validator submodule's `resources/presets.txt` — the vnu
+/// servlet only honors schema URLs from its allowlist, and preset
+/// membership is what puts these on it.
+const VALIDATE_SCHEMA_DEFAULT: &str = "http://s.validator.nu/html5-scholarly.rnc \
+     http://s.validator.nu/html5/assertions.sch http://c.validator.nu/all/";
 
 /// `GET /` — the editor is the app's home; bounce to it.
 pub async fn root_redirect() -> Redirect {
@@ -194,7 +208,109 @@ pub async fn version() -> Json<VersionInfo> {
             date: LATEXML_OXIDE_DATE.to_string(),
             url,
         },
+        validator: SchemaSourceVersion {
+            sha: VALIDATOR_SHA.to_string(),
+            url: format!("{VALIDATOR_REPO_DEFAULT}/tree/latexml-html5"),
+        },
     })
+}
+
+/// Query parameters accepted by `POST /api/validate`, forwarded to
+/// the vnu service. All optional; defaults target the scholarly
+/// profile with a JSON report.
+#[derive(Debug, Deserialize)]
+pub struct ValidateParams {
+    /// Output format: `json` (default), `gnu`, `xml`, `text`.
+    pub out:    Option<String>,
+    /// Space-separated schema URLs. Must be on the vnu allowlist
+    /// (i.e. appear in the presets the service was built with).
+    pub schema: Option<String>,
+    /// Parser override (e.g. `xml`); omitted = auto by content-type.
+    pub parser: Option<String>,
+}
+
+/// `POST /api/validate` — proxy to the vnu (Nu validator) service.
+///
+/// The request body is the document to validate (HTML5, `text/html`
+/// unless the caller says otherwise). The response is the vnu
+/// report, passed through verbatim — `?out=json` (the default)
+/// yields the `{"messages": [...]}` shape that `corpus-validate.py`
+/// and the editor consume.
+///
+/// The vnu servlet is a separate single-purpose JVM container; we
+/// proxy rather than expose it so the schema default, body-size cap,
+/// rate limiting, and the Anubis bypass policy all live in one place.
+/// `AR5IV_EDITOR_VALIDATOR_URL` unset (e.g. a dev run without the
+/// compose stack) degrades to 503 rather than a connection error.
+pub async fn validate(
+    headers: HeaderMap,
+    Query(params): Query<ValidateParams>,
+    body: Bytes,
+) -> Result<Response, AppError> {
+    let Some(base) = std::env::var("AR5IV_EDITOR_VALIDATOR_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+    else {
+        return Err(AppError::Unavailable(
+            "validation service not configured".to_string(),
+        ));
+    };
+    if body.is_empty() {
+        return Err(AppError::BadRequest(
+            "empty body; POST the document to validate".to_string(),
+        ));
+    }
+
+    // One pooled client for the life of the process. The 60 s ceiling
+    // is generous on purpose: book-sized HTML on the shared 1-vCPU box
+    // can take a while, and the JVM handles its own request queueing.
+    static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            // The vnu servlet 400s requests without a User-Agent.
+            .user_agent(concat!("ar5iv-editor/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .expect("reqwest client builds")
+    });
+
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("text/html; charset=utf-8")
+        .to_string();
+    let out = params.out.unwrap_or_else(|| "json".to_string());
+    let schema = params
+        .schema
+        .unwrap_or_else(|| VALIDATE_SCHEMA_DEFAULT.to_string());
+
+    let mut query: Vec<(&str, &str)> = vec![("out", &out), ("schema", &schema)];
+    if let Some(parser) = params.parser.as_deref() {
+        query.push(("parser", parser));
+    }
+
+    let upstream = CLIENT
+        .post(format!("{}/", base.trim_end_matches('/')))
+        .query(&query)
+        .header(header::CONTENT_TYPE, content_type)
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| AppError::Unavailable(format!("validation service: {e}")))?;
+
+    let status = StatusCode::from_u16(upstream.status().as_u16())
+        .unwrap_or(StatusCode::BAD_GATEWAY);
+    let resp_type = upstream
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/json")
+        .to_string();
+    let bytes = upstream
+        .bytes()
+        .await
+        .map_err(|e| AppError::Unavailable(format!("validation service: {e}")))?;
+
+    Ok((status, [(header::CONTENT_TYPE, resp_type)], bytes).into_response())
 }
 
 fn render_html(status: StatusCode, body: String) -> Response {

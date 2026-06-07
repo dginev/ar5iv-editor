@@ -51,8 +51,21 @@ fn main() {
             run_git(&["-C", "../../../latexml-oxide", "log", "-1", "--format=%cs", REF])
         });
 
+    // The validator schema source is a submodule at the repo root
+    // (`../../validator`), so — unlike latexml-oxide above — HEAD *is*
+    // the pinned commit and needs no branch indirection.
+    println!("cargo:rerun-if-env-changed=VALIDATOR_SHA");
+    println!("cargo:rerun-if-changed=../../.git/modules/validator/HEAD");
+    let validator_sha = std::env::var("VALIDATOR_SHA")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            run_git(&["-C", "../../validator", "rev-parse", "--short", "HEAD"])
+        });
+
     println!("cargo:rustc-env=LATEXML_OXIDE_SHA={}", sha);
     println!("cargo:rustc-env=LATEXML_OXIDE_DATE={}", date);
+    println!("cargo:rustc-env=VALIDATOR_SHA={}", validator_sha);
 }
 
 fn run_git(args: &[&str]) -> String {
