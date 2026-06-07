@@ -123,7 +123,9 @@
 
   <h2>Validating documents</h2>
   <p>
-    The site also runs a hosted Nu validator, reachable as a REST
+    The <a href="/validate">Validator</a> tab checks a pasted or
+    uploaded document against the site's schemas and shows the report
+    inline. Under the hood it is a hosted Nu validator, reachable as a REST
     endpoint: <code>POST /api/validate</code> with your document as
     the request body. The <code>Content-Type</code> picks the schema
     &mdash; <code>text/html</code> for the scholarly HTML5 profile

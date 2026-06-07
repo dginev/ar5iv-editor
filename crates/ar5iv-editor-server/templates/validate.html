@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Validate &mdash; ar5iv Editor{% endblock %}
+{% block main %}
+<section class="upload-page validate-page">
+  <div class="upload-intro">
+    <h1>Validate a document</h1>
+    <p class="lede">Check a document against the
+      <a href="/schemas">schemas this site maintains</a> &mdash; the
+      hosted Nu validator returns the same report as
+      <code>POST /api/validate</code>.</p>
+
+    <form id="validate-form" class="validate-form">
+      <div class="validate-controls">
+        <label for="validate-format">Format</label>
+        <select id="validate-format">
+          <option value="text/html; charset=utf-8" selected>
+            LaTeXML scholarly HTML5 (text/html)
+          </option>
+          <option value="application/latexml+xml">
+            LaTeXML XML (application/latexml+xml)
+          </option>
+          <option value="application/mathml+xml">
+            MathML 4 Core (application/mathml+xml)
+          </option>
+        </select>
+        <button id="validate-submit" type="submit">Validate</button>
+      </div>
+
+      <textarea id="validate-source" rows="14" spellcheck="false"
+                placeholder="Paste a document here, or pick a file below&hellip;"></textarea>
+
+      <label class="validate-file">
+        <input id="validate-file" type="file"
+               accept=".html,.htm,.xml,.mml,text/html,application/xml" />
+        <span class="upload-drop__hint">A chosen file is validated instead
+          of the text box (its format is auto-selected from the
+          extension); large documents are not rendered into the page.</span>
+      </label>
+
+      <details id="validate-fileinfo" class="validate-fileinfo" hidden>
+        <summary>
+          <span id="validate-filename"></span>
+          <button id="validate-fileclear" type="button"
+                  title="Remove the chosen file">&times;</button>
+        </summary>
+        <dl class="validate-filemeta">
+          <dt>Size</dt><dd id="validate-filesize"></dd>
+          <dt>Format</dt><dd id="validate-fileformat"></dd>
+        </dl>
+      </details>
+    </form>
+
+    <div class="upload-status" id="validate-status" aria-live="polite">
+      <span class="caption">Status</span>
+      <span id="status">ready</span>
+    </div>
+  </div>
+
+  <div id="validate-report" class="validate-report" hidden>
+    <h2 id="validate-verdict"></h2>
+    <ol id="validate-messages" class="validate-messages"></ol>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script type="module" src="/static/validate.js"></script>
+{% endblock %}

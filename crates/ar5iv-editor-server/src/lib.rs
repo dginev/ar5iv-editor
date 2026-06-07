@@ -62,6 +62,7 @@ pub fn router(state: AppState) -> Router {
         .route("/help", get(routes::help))
         .route("/editor", get(routes::editor))
         .route("/upload", get(routes::upload))
+        .route("/validate", get(routes::validate_page))
         .route("/vscode", get(routes::vscode))
         .route("/convert", any(ws::ws_handler))
         .merge(files::router())
@@ -71,9 +72,18 @@ pub fn router(state: AppState) -> Router {
         // route-level limit overrides the global upload-sized layer
         // below (innermost DefaultBodyLimit wins), keeping the public
         // validation surface tighter than the session-quota bound.
+        // Layer order (outer to inner): gzip request decompression
+        // first, then the 20 MB cap — so the cap governs the
+        // *decompressed* document and a compressed bomb can't sneak
+        // past it. Clients may send `Content-Encoding: gzip` to save
+        // bandwidth on book-sized uploads.
         .route(
             "/api/validate",
-            post(routes::validate).layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+            post(routes::validate)
+                // Turbofish: chaining a second `.layer` leaves the
+                // intermediate `NewError` parameter unconstrained.
+                .layer::<_, std::convert::Infallible>(DefaultBodyLimit::max(20 * 1024 * 1024))
+                .layer(tower_http::decompression::RequestDecompressionLayer::new()),
         )
         .layer(DefaultBodyLimit::max(body_limit))
         .layer(TraceLayer::new_for_http())

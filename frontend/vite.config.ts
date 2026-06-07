@@ -12,12 +12,14 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     rollupOptions: {
-      // Two page entries, each emitted as `<name>.js` into the served dist:
-      // `main.js` for the editor (/editor) and `upload.js` for the archive-drop
-      // page (/upload). Both backend templates link `/static/<name>.js`.
+      // Page entries, each emitted as `<name>.js` into the served dist:
+      // `main.js` for the editor (/editor), `upload.js` for the archive-drop
+      // page (/upload), and `validate.js` for the validation page
+      // (/validate). The backend templates link `/static/<name>.js`.
       input: {
         main: "src/main.ts",
         upload: "src/upload.ts",
+        validate: "src/validate.ts",
       },
       output: {
         entryFileNames: "[name].js",
@@ -43,6 +45,7 @@ export default defineConfig({
       "/help":   "http://127.0.0.1:3000",
       "/editor": "http://127.0.0.1:3000",
       "/upload": "http://127.0.0.1:3000",
+      "/validate": "http://127.0.0.1:3000",
       "/api":    "http://127.0.0.1:3000",
       // Without this, Vite's SPA fallback returns index.html for any
       // /static/* request — so `<script src="/static/main.js">` in the

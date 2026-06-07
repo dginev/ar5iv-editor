@@ -23,3 +23,7 @@ pub struct HelpTemplate;
 #[derive(Template)]
 #[template(path = "schemas.html")]
 pub struct SchemasTemplate;
+
+#[derive(Template)]
+#[template(path = "validate.html")]
+pub struct ValidateTemplate;

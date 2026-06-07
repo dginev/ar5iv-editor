@@ -15,6 +15,7 @@ use crate::{
     error::AppError,
     templates::{
         AboutTemplate, EditorTemplate, HelpTemplate, SchemasTemplate, UploadTemplate,
+        ValidateTemplate,
         VscodeTemplate,
     },
 };
@@ -213,6 +214,13 @@ pub async fn help() -> Result<Response, AppError> {
 
 pub async fn schemas() -> Result<Response, AppError> {
     Ok(render_html(StatusCode::OK, SchemasTemplate.render()?))
+}
+
+/// `GET /validate` — the validation showcase page: paste or pick a
+/// document, choose its format, see the Nu validator's report. A thin
+/// themed client over `POST /api/validate`.
+pub async fn validate_page() -> Result<Response, AppError> {
+    Ok(render_html(StatusCode::OK, ValidateTemplate.render()?))
 }
 
 /// `GET /api/version` — returns build-time info about the

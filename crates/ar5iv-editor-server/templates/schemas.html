@@ -91,7 +91,9 @@
     <a href="https://validator.github.io/validator/" target="_blank"
        rel="noopener noreferrer">Nu&nbsp;validator</a> carrying these
     schemas as built-in presets &mdash; returns the full report. The
-    request <code>Content-Type</code> selects the schema:
+    request <code>Content-Type</code> selects the schema. (Prefer a
+    browser? The <a href="/validate">Validator page</a> wraps this
+    same endpoint.)
   </p>
   <table class="prose-table">
     <thead>
@@ -125,7 +127,9 @@
     (<code>{"messages":&nbsp;[&hellip;]}</code>; an empty list means the
     document is valid); pass <code>?out=gnu</code>,
     <code>?out=xml</code>, or <code>?out=text</code> for other formats.
-    Documents must be UTF-8 and at most 16&nbsp;MB; unsupported media
+    Documents must be UTF-8 and at most 20&nbsp;MB; requests may be
+    gzip-compressed (<code>Content-Encoding:&nbsp;gzip</code>, the
+    limit applies to the decompressed document); unsupported media
     types get a <code>415</code> listing the supported set.
   </p>
   <pre><code># scholarly HTML5 (the default)
@@ -141,6 +145,12 @@ curl -X POST https://latexml.rs/api/validate \
 # a MathML Core fragment, as a GNU-style error listing
 curl -X POST 'https://latexml.rs/api/validate?out=gnu' \
      -H 'Content-Type: application/mathml+xml' \
-     --data-binary @formula.mml</code></pre>
+     --data-binary @formula.mml
+
+# gzip the upload to save bandwidth on a book-sized document
+gzip -c book.html | curl -X POST https://latexml.rs/api/validate \
+     -H 'Content-Type: text/html; charset=utf-8' \
+     -H 'Content-Encoding: gzip' \
+     --data-binary @-</code></pre>
 </article>
 {% endblock %}

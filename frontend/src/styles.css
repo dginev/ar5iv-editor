@@ -1267,3 +1267,143 @@ body.converting * {
     overflow: hidden;            /* contain codemirror inside the 50vh cap */
   }
 }
+
+/* ---- /validate page ------------------------------------------------- */
+/* Rides the upload-page scaffold; these cover the controls + report. */
+.validate-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.validate-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.validate-controls label {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+.validate-controls select {
+  flex: 1 1 16rem;
+  padding: 0.45rem 0.6rem;
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+.validate-controls button {
+  padding: 0.45rem 1.4rem;
+  font: inherit;
+  font-weight: 600;
+  color: var(--bg-elev);
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.validate-controls button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+#validate-source {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--ink);
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 0.75rem;
+  resize: vertical;
+}
+.validate-file { font-size: 0.9rem; }
+.validate-report {
+  max-width: 64rem;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 1.5rem 3rem;
+}
+.validate-report h2 { font-family: var(--serif); }
+.validate-verdict--ok { color: var(--ok, #2e7d32); }
+.validate-verdict--fail { color: var(--error, #c62828); }
+.validate-messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.validate-msg {
+  border: 1px solid var(--rule);
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 0.55rem 0.8rem;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 0.25rem 0.75rem;
+  align-items: baseline;
+}
+.validate-msg--error { border-left-color: var(--error, #c62828); }
+.validate-msg--warning { border-left-color: var(--warn, #e09100); }
+.validate-msg--info { border-left-color: var(--accent); }
+.validate-msg__badge {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+.validate-msg__loc {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+.validate-msg__text { grid-column: 3; }
+.validate-msg__extract {
+  grid-column: 1 / -1;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  background: var(--bg-sunken);
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  overflow-x: auto;
+  white-space: pre;
+}
+.validate-fileinfo {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.4rem 0.7rem;
+  background: var(--bg-elev);
+}
+.validate-fileinfo summary {
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.validate-fileinfo summary button {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--ink-soft);
+  font-size: 1rem;
+  cursor: pointer;
+  line-height: 1;
+}
+.validate-fileinfo summary button:hover { color: var(--error, #c62828); }
+.validate-filemeta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 1rem;
+  margin: 0.5rem 0 0.2rem;
+  font-size: 0.85rem;
+}
+.validate-filemeta dt { color: var(--ink-soft); }
+.validate-filemeta dd { margin: 0; font-family: var(--mono); }
