@@ -1,0 +1,8 @@
+[submodule "validator"]
+	path = validator
+	url = https://github.com/dginev/validator.git
+	branch = latexml-html5
+[submodule "mathml-schema"]
+	path = mathml-schema
+	url = https://github.com/w3c/mathml-schema.git
+	branch = main
