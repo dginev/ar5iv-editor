@@ -37,6 +37,16 @@ bots:
     path_regex: ^/(about|help|static/|favicon)
     action: ALLOW
 
+  # Public REST API: validation must work from curl / scripts, so it
+  # can't sit behind the JS challenge. The endpoint is a proxy with
+  # its own guard rails (16 MB body cap, 60 s upstream timeout, and a
+  # single-purpose memory-capped JVM behind it) — worst case is
+  # bounded compute, not session/disk state. Version probing is
+  # read-only and cheap.
+  - name: rest-api
+    path_regex: ^/api/(validate|version)$
+    action: ALLOW
+
   # Everything else — the editor surface (/editor), the API
   # (/api/*), and the WebSocket (/convert) — gets a JS challenge.
   # Browsers clear it once and keep a cookie; scripted clients
