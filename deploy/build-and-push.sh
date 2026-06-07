@@ -178,7 +178,11 @@ fi
 echo "==> [local prep] building VS Code Web workbench assets"
 (
     cd "$CTX/ar5iv-editor/vscode-extension"
-    npm ci --no-audit --no-fund
+    # Playwright browsers are a test-only dependency; the
+    # @playwright/browser-chromium postinstall hard-fails on host
+    # platforms its pinned version doesn't recognize (e.g. a too-new
+    # Ubuntu). The workbench asset build needs none of it.
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund
     # Idempotent: re-downloads the ~190 MB standalone build only on a
     # cold cache or pin bump (the .ar5iv-vscode-web-version stamp gates
     # it); otherwise just re-vendors the ar5iv/ bootstrap. Writes into
