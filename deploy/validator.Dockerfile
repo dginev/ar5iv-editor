@@ -33,8 +33,11 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s \
     CMD curl -fsS http://127.0.0.1:8888/ >/dev/null || exit 1
 
 # max-file-size: the servlet's resource cap defaults to 2 MB —
-# book-sized scholarly HTML runs well past it. 20 MB matches the
-# proxy's post-decompression body cap.
-CMD ["java", "-Xmx384m", "-XX:+ExitOnOutOfMemoryError", \
-     "-Dnu.validator.servlet.max-file-size=20971520", \
+# book-sized scholarly HTML runs well past it. 35 MB matches the
+# proxy's post-decompression body cap. The heap rides along (the
+# servlet buffers the whole document, UTF-16 doubled, plus the
+# parse tree): 512m is the most that fits under the 640m compose
+# mem_limit once metaspace/threads/Jetty native overhead is counted.
+CMD ["java", "-Xmx512m", "-XX:+ExitOnOutOfMemoryError", \
+     "-Dnu.validator.servlet.max-file-size=36700160", \
      "-cp", "/app/vnu.jar", "nu.validator.servlet.Main", "8888"]

@@ -1374,6 +1374,71 @@ body.converting * {
   overflow-x: auto;
   white-space: pre;
 }
+/* Five-row full-width source window per message; rows keep all their
+   characters (horizontal scroll), the gutter stays pinned, and the
+   reported range is <mark>ed. */
+.validate-msg__context {
+  grid-column: 1 / -1;
+  position: relative;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  background: var(--bg-sunken);
+  border-radius: 4px;
+  padding: 0.3rem 0;
+  overflow-x: auto;
+}
+.validate-ctx__row {
+  display: flex;
+  white-space: pre;
+}
+.validate-ctx__ln {
+  flex: none;
+  min-width: 4em;
+  padding: 0 0.6em 0 0.4em;
+  text-align: right;
+  color: var(--ink-soft);
+  border-right: 1px solid var(--rule);
+  margin-right: 0.5em;
+  user-select: none;
+  position: sticky;
+  left: 0;
+  background: var(--bg-sunken);
+}
+.validate-msg__context mark {
+  background: var(--accent);
+  color: var(--bg-sunken);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+/* Page-wide progress cursor while a validation request is in flight. */
+body.validate-busy,
+body.validate-busy * {
+  cursor: progress !important;
+}
+/* Credit to the Nu Html Checker: rendered as a margin note in the
+   free right-hand gutter when the viewport allows, inline otherwise. */
+.validate-page .upload-intro { position: relative; }
+.validate-credit {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  border-left: 2px solid var(--rule);
+  padding-left: 0.8rem;
+  margin: 0 0 1.4rem;
+  max-width: 36rem;
+}
+@media (min-width: 96em) {
+  .validate-credit {
+    position: absolute;
+    left: 100%;
+    top: 3.2rem; /* ≈ aligned with the page heading */
+    margin: 0 0 0 1.5rem;
+    width: 14rem;
+  }
+}
 .validate-fileinfo {
   border: 1px solid var(--rule);
   border-radius: 6px;

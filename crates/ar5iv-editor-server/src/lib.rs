@@ -73,7 +73,7 @@ pub fn router(state: AppState) -> Router {
         // below (innermost DefaultBodyLimit wins), keeping the public
         // validation surface tighter than the session-quota bound.
         // Layer order (outer to inner): gzip request decompression
-        // first, then the 20 MB cap — so the cap governs the
+        // first, then the 35 MB cap — so the cap governs the
         // *decompressed* document and a compressed bomb can't sneak
         // past it. Clients may send `Content-Encoding: gzip` to save
         // bandwidth on book-sized uploads.
@@ -82,7 +82,7 @@ pub fn router(state: AppState) -> Router {
             post(routes::validate)
                 // Turbofish: chaining a second `.layer` leaves the
                 // intermediate `NewError` parameter unconstrained.
-                .layer::<_, std::convert::Infallible>(DefaultBodyLimit::max(20 * 1024 * 1024))
+                .layer::<_, std::convert::Infallible>(DefaultBodyLimit::max(35 * 1024 * 1024))
                 .layer(tower_http::decompression::RequestDecompressionLayer::new()),
         )
         .layer(DefaultBodyLimit::max(body_limit))
