@@ -38,6 +38,11 @@ const VALIDATOR_REPO_DEFAULT: &str = "https://github.com/dginev/validator";
 /// membership is what puts these on it.
 const VALIDATE_SCHEMA_DEFAULT: &str = "http://s.validator.nu/html5-scholarly.rnc \
      http://s.validator.nu/html5/assertions.sch http://c.validator.nu/all/";
+/// LaTeXML's XML document schema (the engine's native serialization),
+/// vendored into the validator as a flattened single-file grammar.
+const VALIDATE_SCHEMA_LATEXML: &str = "http://s.validator.nu/latexml.rnc";
+/// MathML 4 Core, vendored from w3c/mathml-schema.
+const VALIDATE_SCHEMA_MATHML: &str = "http://s.validator.nu/mathml4-core.rnc";
 
 /// `GET /` — the editor is the app's home; bounce to it.
 pub async fn root_redirect() -> Redirect {
@@ -251,16 +256,45 @@ pub struct ValidateParams {
     pub parser: Option<String>,
 }
 
+/// The three document formats `/api/validate` accepts, keyed by the
+/// request's `Content-Type`. Each maps to a schema preset baked into
+/// the vnu service plus the parser the proxy requests from it (`None`
+/// = vnu's textarea default, the HTML5 parser).
+///
+/// `Content-Type` absent → HTML5. The generic XML types are accepted
+/// as aliases for the LaTeXML document schema — it's the only
+/// general-purpose XML vocabulary this service validates.
+fn schema_for_mime(content_type: &str) -> Option<(&'static str, Option<&'static str>)> {
+    let essence = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    match essence.as_str() {
+        "" | "text/html" => Some((VALIDATE_SCHEMA_DEFAULT, None)),
+        "application/latexml+xml" | "application/xml" | "text/xml" => {
+            Some((VALIDATE_SCHEMA_LATEXML, Some("xml")))
+        },
+        "application/mathml+xml" => Some((VALIDATE_SCHEMA_MATHML, Some("xml"))),
+        _ => None,
+    }
+}
+
 /// `POST /api/validate` — proxy to the vnu (Nu validator) service.
 ///
-/// The request body is the document to validate (HTML5, `text/html`
-/// unless the caller says otherwise). The response is the vnu
-/// report, passed through verbatim — `?out=json` (the default)
-/// yields the `{"messages": [...]}` shape that `corpus-validate.py`
-/// and the editor consume.
+/// The request body is the document to validate; its `Content-Type`
+/// selects the schema (see [`schema_for_mime`]): `text/html` → the
+/// scholarly HTML5 profile (also the default when no type is given),
+/// `application/latexml+xml` (or generic XML types) → the LaTeXML
+/// document schema, `application/mathml+xml` → MathML 4 Core. Other
+/// types are a 415. An explicit `?schema=` overrides the mapping.
+/// The vnu report is passed through verbatim — `?out=json` (the
+/// default) yields the `{"messages": [...]}` shape that
+/// `corpus-validate.py` and the editor consume.
 ///
 /// The vnu servlet is a separate single-purpose JVM container; we
-/// proxy rather than expose it so the schema default, body-size cap,
+/// proxy rather than expose it so the schema mapping, body-size cap,
 /// rate limiting, and the Anubis bypass policy all live in one place.
 /// `AR5IV_EDITOR_VALIDATOR_URL` unset (e.g. a dev run without the
 /// compose stack) degrades to 503 rather than a connection error.
@@ -295,26 +329,74 @@ pub async fn validate(
             .expect("reqwest client builds")
     });
 
-    let content_type = headers
+    let request_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("text/html; charset=utf-8")
+        .unwrap_or("")
         .to_string();
+    let Some((mapped_schema, mapped_parser)) = schema_for_mime(&request_type) else {
+        return Ok((
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Json(serde_json::json!({
+                "error": format!("unsupported Content-Type {request_type:?}"),
+                "supported": ["text/html", "application/latexml+xml", "application/mathml+xml"],
+            })),
+        )
+            .into_response());
+    };
+    // Schemas are RELAX NG over text; reject undecodable input rather
+    // than validating a lossy transcription.
+    let Ok(document) = String::from_utf8(body.to_vec()) else {
+        return Err(AppError::BadRequest(
+            "document must be UTF-8 encoded".to_string(),
+        ));
+    };
     let out = params.out.unwrap_or_else(|| "json".to_string());
     let schema = params
         .schema
-        .unwrap_or_else(|| VALIDATE_SCHEMA_DEFAULT.to_string());
+        .unwrap_or_else(|| mapped_schema.to_string());
+    let parser = params
+        .parser
+        .or_else(|| mapped_parser.map(str::to_string));
 
-    let mut query: Vec<(&str, &str)> = vec![("out", &out), ("schema", &schema)];
-    if let Some(parser) = params.parser.as_deref() {
-        query.push(("parser", parser));
+    // Multipart `content` field rather than a raw POST body: vnu
+    // buffers a form upload completely before parsing, whereas with a
+    // raw body its SAX pipeline aborts the connection at the first
+    // fatal error — racing our body write and surfacing as a spurious
+    // connection error for documents that fail early (e.g. an HTML
+    // document handed to the XML parser). Hand-assembled rather than
+    // reqwest's multipart builder: reqwest streams multipart chunked,
+    // and vnu's form reader only consumes sized bodies (the document
+    // arrives empty under chunked transfer).
+    let mut boundary = String::from("ar5iv-validate-boundary");
+    while document.contains(&boundary) {
+        boundary.push('x');
     }
+    // Field order is significant: the servlet processes the multipart
+    // stream sequentially and starts parsing the document the moment
+    // the `content` field arrives — parameters after it are ignored.
+    // (Same reason the validator.nu form puts every control before
+    // the textarea.)
+    let mut fields: Vec<(&str, &str)> = vec![("out", &out), ("schema", &schema)];
+    if let Some(parser) = parser.as_deref() {
+        fields.push(("parser", parser));
+    }
+    fields.push(("content", &document));
+    let mut form_body = String::new();
+    for (name, value) in fields {
+        form_body.push_str(&format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+        ));
+    }
+    form_body.push_str(&format!("--{boundary}--\r\n"));
 
     let upstream = CLIENT
         .post(format!("{}/", base.trim_end_matches('/')))
-        .query(&query)
-        .header(header::CONTENT_TYPE, content_type)
-        .body(body)
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(form_body)
         .send()
         .await
         .map_err(|e| AppError::Unavailable(format!("validation service: {e}")))?;
