@@ -158,6 +158,19 @@ button:hover { border-color: var(--accent); color: var(--accent); }
   letter-spacing: 0.02em;
 }
 .ar5iv-header nav a:hover { color: var(--accent); text-decoration: none; }
+/* Bold the nav item for the active page. The match is driven by the
+   `data-page` attribute base.html sets on <body> (server-rendered, so
+   no flash). `aria-current` is added for assistive tech. */
+body[data-page="editor"]   .ar5iv-header nav a[href="/editor"],
+body[data-page="upload"]   .ar5iv-header nav a[href="/upload"],
+body[data-page="vscode"]   .ar5iv-header nav a[href="/vscode"],
+body[data-page="schemas"]  .ar5iv-header nav a[href="/schemas"],
+body[data-page="validate"] .ar5iv-header nav a[href="/validate"],
+body[data-page="about"]    .ar5iv-header nav a[href="/about"],
+body[data-page="help"]     .ar5iv-header nav a[href="/help"] {
+  font-weight: 700;
+  color: var(--ink);
+}
 
 /* Pin the theme toggle to a fixed width so cycling between
    `paper` / `midnight` / `terminal` doesn't reflow the rest of the
