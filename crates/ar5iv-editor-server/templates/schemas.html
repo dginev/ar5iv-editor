@@ -82,5 +82,65 @@
     models render as multi-line structural expressions rather than
     one-line walls of comma-separated links.
   </p>
+
+  <h2 id="validation">Validating documents against these schemas</h2>
+  <p>
+    All three schemas are live validation targets, not just reference
+    documentation. <code>POST</code> a document to
+    <code>/api/validate</code> and the service &mdash; a hosted
+    <a href="https://validator.github.io/validator/" target="_blank"
+       rel="noopener noreferrer">Nu&nbsp;validator</a> carrying these
+    schemas as built-in presets &mdash; returns the full report. The
+    request <code>Content-Type</code> selects the schema:
+  </p>
+  <table class="prose-table">
+    <thead>
+      <tr>
+        <th scope="col">Content-Type</th>
+        <th scope="col">Validates against</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row"><code>text/html</code></th>
+        <td>LaTeXML scholarly HTML5 profile
+            (<code>scholarly-ltx.rnc</code>) &mdash; also the
+            <strong>default</strong> when no <code>Content-Type</code>
+            is sent.</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>application/latexml+xml</code></th>
+        <td>LaTeXML XML document schema (<code>LaTeXML.rnc</code>).
+            The generic <code>application/xml</code> and
+            <code>text/xml</code> are accepted as aliases.</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>application/mathml+xml</code></th>
+        <td>MathML 4 Core (<code>mathml4-core.rnc</code>).</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Reports default to the Nu validator's JSON shape
+    (<code>{"messages":&nbsp;[&hellip;]}</code>; an empty list means the
+    document is valid); pass <code>?out=gnu</code>,
+    <code>?out=xml</code>, or <code>?out=text</code> for other formats.
+    Documents must be UTF-8 and at most 16&nbsp;MB; unsupported media
+    types get a <code>415</code> listing the supported set.
+  </p>
+  <pre><code># scholarly HTML5 (the default)
+curl -X POST https://latexml.rs/api/validate \
+     -H 'Content-Type: text/html; charset=utf-8' \
+     --data-binary @paper.html
+
+# the engine's native XML
+curl -X POST https://latexml.rs/api/validate \
+     -H 'Content-Type: application/latexml+xml' \
+     --data-binary @paper.xml
+
+# a MathML Core fragment, as a GNU-style error listing
+curl -X POST 'https://latexml.rs/api/validate?out=gnu' \
+     -H 'Content-Type: application/mathml+xml' \
+     --data-binary @formula.mml</code></pre>
 </article>
 {% endblock %}

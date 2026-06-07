@@ -121,6 +121,26 @@
     </tbody>
   </table>
 
+  <h2>Validating documents</h2>
+  <p>
+    The site also runs a hosted Nu validator, reachable as a REST
+    endpoint: <code>POST /api/validate</code> with your document as
+    the request body. The <code>Content-Type</code> picks the schema
+    &mdash; <code>text/html</code> for the scholarly HTML5 profile
+    (the default), <code>application/latexml+xml</code> for the
+    engine's native XML, <code>application/mathml+xml</code> for
+    MathML&nbsp;4 Core &mdash; and the response is the validator's
+    JSON report (an empty <code>messages</code> list means valid).
+  </p>
+  <pre><code>curl -X POST https://latexml.rs/api/validate \
+     -H 'Content-Type: text/html; charset=utf-8' \
+     --data-binary @paper.html</code></pre>
+  <p>
+    See the <a href="/schemas#validation">Schemas page</a> for the
+    full Content-Type table, output formats, and limits &mdash; and
+    for the browseable reference documentation of all three schemas.
+  </p>
+
   <h2>Themes</h2>
   <p>
     Click the chrome-theme button at the top-right to cycle through three
