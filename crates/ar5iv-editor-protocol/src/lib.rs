@@ -14,6 +14,18 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionInfo {
     pub latexml_oxide: LatexmlOxideVersion,
+    /// Pin of the `validator` submodule (the Nu validator fork that
+    /// supplies the scholarly schema and the vnu validation service)
+    /// this build shipped with.
+    pub validator: SchemaSourceVersion,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaSourceVersion {
+    /// Short SHA of the pinned submodule commit.
+    pub sha: String,
+    /// Repo URL pointing at the pinned source.
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -56,6 +56,9 @@ WORKDIR /build
 # preview header can render a "powered by latexml-oxide @<sha>" link.
 ARG LATEXML_OXIDE_SHA=unknown
 ARG LATEXML_OXIDE_DATE=unknown
+# Pin of the `validator` submodule (schema source + vnu service);
+# surfaced through `/api/version` alongside the latexml-oxide SHA.
+ARG VALIDATOR_SHA=unknown
 # Optional cargo job cap for memory/thermal-constrained build hosts.
 # `0` (default) = cargo's default (all logical CPUs). Pass e.g.
 # `--build-arg CARGO_JOBS=6` to bound the concurrent rustc/codegen
@@ -70,7 +73,8 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     RUSTFLAGS="-C target-cpu=x86-64-v3" \
     CARGO_TERM_COLOR=always \
     LATEXML_OXIDE_SHA=$LATEXML_OXIDE_SHA \
-    LATEXML_OXIDE_DATE=$LATEXML_OXIDE_DATE
+    LATEXML_OXIDE_DATE=$LATEXML_OXIDE_DATE \
+    VALIDATOR_SHA=$VALIDATOR_SHA
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential curl ca-certificates \

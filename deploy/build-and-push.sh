@@ -35,10 +35,17 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SIBLING_PARENT="$(cd "$REPO_ROOT/.." && pwd)"
 LATEXML_PATH="${LATEXML_PATH:-$SIBLING_PARENT/latexml-oxide}"
-VALIDATOR_PATH="${VALIDATOR_PATH:-$SIBLING_PARENT/validator}"
-MATHML_SCHEMA_PATH="${MATHML_SCHEMA_PATH:-$SIBLING_PARENT/mathml-schema}"
+# Schema sources default to the repo's submodules (the pinned,
+# provenance-tracked state). Point the env overrides at sibling dev
+# checkouts when you intentionally want to build against unpinned
+# work-in-progress schemas.
+VALIDATOR_PATH="${VALIDATOR_PATH:-$REPO_ROOT/validator}"
+MATHML_SCHEMA_PATH="${MATHML_SCHEMA_PATH:-$REPO_ROOT/mathml-schema}"
 IMAGE="${IMAGE:-ghcr.io/$(git -C "$REPO_ROOT" config --get remote.origin.url \
     | sed -E 's|.*[:/]([^/]+/[^/.]+)(\.git)?$|\1|')/ar5iv-editor:latest}"
+# Companion image: the vnu (Nu validator) web service that backs
+# `/api/validate`. Lives in the same ghcr namespace, same tag.
+VALIDATOR_IMAGE="${VALIDATOR_IMAGE:-${IMAGE/ar5iv-editor:/ar5iv-validator:}}"
 PUSH=0
 
 for arg in "$@"; do
@@ -60,6 +67,14 @@ require_dir() {
 require_dir latexml-oxide "$LATEXML_PATH"       LATEXML_PATH
 require_dir validator     "$VALIDATOR_PATH"     VALIDATOR_PATH
 require_dir mathml-schema "$MATHML_SCHEMA_PATH" MATHML_SCHEMA_PATH
+
+# An un-initialized submodule passes the directory check but is empty.
+for sub in "$VALIDATOR_PATH" "$MATHML_SCHEMA_PATH"; do
+    if [ -z "$(ls -A "$sub" 2>/dev/null)" ]; then
+        echo "error: $sub is empty — run 'git submodule update --init' first" >&2
+        exit 1
+    fi
+done
 
 # The Dockerfile references `ar5iv-editor/`, `latexml-oxide/`,
 # `validator/`, and `mathml-schema/` paths. We need a build context
@@ -111,12 +126,18 @@ for junk in \
     "$CTX/ar5iv-editor/vscode-extension/node_modules" \
     "$CTX/ar5iv-editor/vscode-extension/dist" \
     "$CTX/ar5iv-editor/vscode-web/ar5iv"  \
+    "$CTX/ar5iv-editor/validator"         \
+    "$CTX/ar5iv-editor/mathml-schema"     \
     "$CTX/latexml-oxide/target"           \
     "$CTX/validator/build"                \
     "$CTX/validator/jing-trang"           \
+    "$CTX/validator/dependencies"         \
     "$CTX/mathml-schema/build"            ; do
     [[ -e "$junk" ]] && rm -rf "$junk"
 done
+# (The staged ar5iv-editor copy carries the submodule worktrees; the
+# canonical staged copies live at $CTX/validator and $CTX/mathml-schema,
+# so the nested ones are dropped along with the build artefacts.)
 
 # ---------------------------------------------------------------------
 # Local pre-build of platform-independent artefacts.
@@ -238,6 +259,26 @@ PATH="$schema_doc_path" "$generator" \
 # before the docker build context-walk picks them up.
 rm -rf "$schema_docs_root"/*-work
 
+# === vnu.jar (validation service) ====================================
+# Pure Java, platform-independent — built on the host from the
+# validator submodule, same rationale as the frontend bundle and the
+# schema docs above. `checker.py dldeps` only fetches missing jars, so
+# warm runs are a quick existence scan; the ant build underneath is
+# incremental. The submodule worktree keeps `dependencies/` and
+# `build/` between runs, so only the first build pays the full cost.
+echo "==> [local prep] building vnu.jar (validation service)"
+if ! command -v java >/dev/null 2>&1; then
+    echo "error: 'java' (JDK 11+) is required on PATH to build vnu.jar" >&2
+    exit 1
+fi
+(
+    cd "$VALIDATOR_PATH"
+    python3 ./checker.py dldeps > /dev/null
+    python3 ./checker.py build > /dev/null
+)
+mkdir -p "$CTX/vnu"
+cp "$VALIDATOR_PATH/build/dist/vnu.jar" "$CTX/vnu/vnu.jar"
+
 # Capture the latexml-oxide commit identity so the binary can render
 # a "powered by latexml-oxide @<sha>" link in the preview header.
 # Pinned to the tip of `master` rather than the local checkout's HEAD
@@ -254,12 +295,18 @@ LATEXML_OXIDE_DATE=$(
     git -C "$LATEXML_PATH" log -1 --format=%cs "$LATEXML_OXIDE_REF" 2>/dev/null \
         || echo "unknown"
 )
+# The validator pin is the submodule's HEAD (or whatever override the
+# caller pointed VALIDATOR_PATH at) — surfaced via /api/version.
+VALIDATOR_SHA=$(
+    git -C "$VALIDATOR_PATH" rev-parse --short HEAD 2>/dev/null \
+        || echo "unknown"
+)
 
 echo
 echo "==> building $IMAGE"
 echo "    repo:          $REPO_ROOT"
 echo "    latexml-oxide: $LATEXML_PATH ($LATEXML_OXIDE_SHA, $LATEXML_OXIDE_DATE)"
-echo "    validator:     $VALIDATOR_PATH"
+echo "    validator:     $VALIDATOR_PATH ($VALIDATOR_SHA)"
 echo "    mathml-schema: $MATHML_SCHEMA_PATH"
 echo "    context:       $CTX"
 echo
@@ -279,6 +326,15 @@ docker build \
     -t "$IMAGE" \
     --build-arg "LATEXML_OXIDE_SHA=$LATEXML_OXIDE_SHA" \
     --build-arg "LATEXML_OXIDE_DATE=$LATEXML_OXIDE_DATE" \
+    --build-arg "VALIDATOR_SHA=$VALIDATOR_SHA" \
+    "${EXTRA[@]}" \
+    "$CTX"
+
+echo
+echo "==> building $VALIDATOR_IMAGE"
+docker build \
+    -f "$REPO_ROOT/deploy/validator.Dockerfile" \
+    -t "$VALIDATOR_IMAGE" \
     "${EXTRA[@]}" \
     "$CTX"
 
@@ -287,10 +343,16 @@ if [[ "$PUSH" -eq 1 ]]; then
     echo "==> pushing $IMAGE"
     docker push "$IMAGE"
     echo
+    echo "==> pushing $VALIDATOR_IMAGE"
+    docker push "$VALIDATOR_IMAGE"
+    echo
     echo "    pull on the server with:"
     echo "    docker pull $IMAGE"
+    echo "    docker pull $VALIDATOR_IMAGE"
 fi
 
 echo
 echo "image:  $IMAGE"
 echo "  size: $(docker image inspect "$IMAGE" --format='{{.Size}}' | numfmt --to=iec)"
+echo "image:  $VALIDATOR_IMAGE"
+echo "  size: $(docker image inspect "$VALIDATOR_IMAGE" --format='{{.Size}}' | numfmt --to=iec)"

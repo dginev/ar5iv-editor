@@ -87,7 +87,12 @@ require_nonempty() {
 # container. This way a Ctrl+C between the build phase and `docker run`
 # doesn't get tripped by a half-installed trap.
 SMOKE_NAME=""
-cleanup() { [[ -n "$SMOKE_NAME" ]] && docker rm -f "$SMOKE_NAME" >/dev/null 2>&1 || true; }
+VNU_SMOKE_NAME=""
+cleanup() {
+    [[ -n "$SMOKE_NAME" ]] && docker rm -f "$SMOKE_NAME" >/dev/null 2>&1
+    [[ -n "$VNU_SMOKE_NAME" ]] && docker rm -f "$VNU_SMOKE_NAME" >/dev/null 2>&1
+    true
+}
 trap cleanup EXIT
 
 # -- arg parsing ------------------------------------------------------------
@@ -121,7 +126,10 @@ LATEXML_OXIDE_REF="${LATEXML_OXIDE_REF:-master}"
 # than what the deploy is configured to fetch (silent footgun).
 IMAGE_BASE="${IMAGE_BASE:-ghcr.io/$(git -C "$REPO_ROOT" config --get remote.origin.url \
     | sed -E 's|.*[:/]([^/]+/[^/.]+)(\.git)?$|\1|')/ar5iv-editor}"
+# Companion vnu validation-service image — same namespace, same tags.
+VALIDATOR_IMAGE_BASE="${VALIDATOR_IMAGE_BASE:-${IMAGE_BASE%/*}/ar5iv-validator}"
 SMOKE_PORT="${SMOKE_PORT:-3210}"
+VNU_SMOKE_PORT="${VNU_SMOKE_PORT:-3211}"
 
 for tool in docker curl jq git awk sed; do
     command -v "$tool" >/dev/null || die "'$tool' is required"
@@ -232,6 +240,8 @@ fi
 DATE_TAG=$(date +%Y%m%d)
 LATEST_TAG="$IMAGE_BASE:latest"
 DATED_TAG="$IMAGE_BASE:$DATE_TAG-$LATEXML_SHA"
+VNU_LATEST_TAG="$VALIDATOR_IMAGE_BASE:latest"
+VNU_DATED_TAG="$VALIDATOR_IMAGE_BASE:$DATE_TAG-$LATEXML_SHA"
 
 # Note: we no longer pre-flight-warn that `deploy-YYYYMMDD-<sha>` exists
 # locally. The E1 step is now idempotent — if the tag already exists
@@ -252,6 +262,8 @@ ${C_BOLD}release plan${C_RST}
   latexml-oxide:   $LATEXML_OXIDE_REF @ $LATEXML_SHA ($LATEXML_DATE)
   image (latest):  $LATEST_TAG
   image (dated):   $DATED_TAG
+  vnu (latest):    $VNU_LATEST_TAG
+  vnu (dated):     $VNU_DATED_TAG
   push:            $([[ $PUSH -eq 1 ]] && echo yes || echo no)
   tag source:      $([[ $TAG_SOURCE -eq 1 ]] && echo yes || echo no)
   no-cache:        $([[ $NO_CACHE -eq 1 ]] && echo yes || echo no)
@@ -302,6 +314,7 @@ COMBINED_EXTRA="${COMBINED_EXTRA%% }"
 # build-and-push.sh respects $IMAGE; we don't pass --push because we
 # want the smoke test to gate the registry push.
 IMAGE="$LATEST_TAG" \
+VALIDATOR_IMAGE="$VNU_LATEST_TAG" \
 LATEXML_PATH="$LATEXML_PATH" \
 LATEXML_OXIDE_REF="$LATEXML_OXIDE_REF" \
 DOCKER_BUILDKIT=1 \
@@ -515,6 +528,41 @@ cleanup
 SMOKE_NAME=""
 phase_end
 
+# ---------------------------------------------------------------------------
+# B4. vnu service smoke test
+# ---------------------------------------------------------------------------
+phase_start "[B4] vnu smoke-test on :$VNU_SMOKE_PORT"
+VNU_SMOKE_NAME="vnu-smoke-$(date +%s)-$$"
+if ! VNU_CONTAINER_ID=$(docker run --rm -d -p "$VNU_SMOKE_PORT:8888" --name "$VNU_SMOKE_NAME" "$VNU_LATEST_TAG" 2>&1); then
+    die "docker run failed for $VNU_LATEST_TAG: $VNU_CONTAINER_ID"
+fi
+deadline=$((SECONDS + 45))
+until curl -fsS -A release-smoke "http://127.0.0.1:$VNU_SMOKE_PORT/" >/dev/null 2>&1; do
+    if [[ $SECONDS -gt $deadline ]]; then
+        say "${C_BAD}--- vnu container logs ---${C_RST}" >&2
+        docker logs "$VNU_CONTAINER_ID" 2>&1 | tail -30 >&2 || true
+        die "vnu service did not start serving HTTP within 45s"
+    fi
+    sleep 1
+done
+ok "vnu serving HTTP"
+# Validation round-trip with the scholarly preset: a minimal LaTeXML
+# page shell must come back clean, proving the schema bundle baked
+# into this vnu.jar resolves and the preset is HTML-appropriate.
+VNU_DOC='<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>s</title></head><body class="ltx_page_root"><div class="ltx_page_main"><div class="ltx_page_content"><article class="ltx_document"></article></div><footer class="ltx_page_footer"></footer></div></body></html>'
+VNU_SCHEMA='http://s.validator.nu/html5-scholarly.rnc http://s.validator.nu/html5/assertions.sch http://c.validator.nu/all/'
+VNU_RESP=$(printf '%s' "$VNU_DOC" | curl -fsS -A release-smoke \
+    -H 'Content-Type: text/html; charset=utf-8' \
+    --data-binary @- \
+    "http://127.0.0.1:$VNU_SMOKE_PORT/?out=json&schema=$(jq -rn --arg s "$VNU_SCHEMA" '$s|@uri')" \
+    2>&1) || die "vnu validation round-trip failed: $VNU_RESP"
+VNU_ERRORS=$(echo "$VNU_RESP" | jq '[.messages[] | select(.type=="error")] | length')
+[[ "$VNU_ERRORS" == "0" ]] || die "vnu smoke doc should be clean, got: $(echo "$VNU_RESP" | jq -c '.messages')"
+ok "scholarly validation round-trip ok (0 errors)"
+docker rm -f "$VNU_SMOKE_NAME" >/dev/null 2>&1 || true
+VNU_SMOKE_NAME=""
+phase_end
+
 if [[ $PUSH -eq 0 ]]; then
     cat <<EOF
 
@@ -535,6 +583,9 @@ docker tag "$LATEST_TAG" "$DATED_TAG"
 PUSH_START=$SECONDS
 docker push "$LATEST_TAG"
 docker push "$DATED_TAG"
+docker tag "$VNU_LATEST_TAG" "$VNU_DATED_TAG"
+docker push "$VNU_LATEST_TAG"
+docker push "$VNU_DATED_TAG"
 PUSH_DUR=$(( SECONDS - PUSH_START ))
 ok "registry push completed in ${PUSH_DUR}s"
 phase_end
@@ -578,22 +629,24 @@ ${C_BOLD}=========================================================${C_RST}
 ${C_OK}release done in ${TOTAL}s.${C_RST} tags pushed:
   $LATEST_TAG
   $DATED_TAG
+  $VNU_LATEST_TAG
+  $VNU_DATED_TAG
 $([[ $TAG_SOURCE -eq 1 ]] && echo "  git tag pushed:  deploy-$DATE_TAG-$LATEXML_SHA")
 
-next, on the deploy box:
+next, on the deploy box (the .env pins BOTH images to dated tags):
 
     ssh root@<vultr-ip>
     cd /opt/ar5iv-editor/deploy
+    sed -i -E 's|(ar5iv-editor:)[0-9]+-[0-9a-f]+|\1$DATE_TAG-$LATEXML_SHA|; s|(ar5iv-validator:)[0-9]+-[0-9a-f]+|\1$DATE_TAG-$LATEXML_SHA|' .env
+    grep -q AR5IV_VALIDATOR_IMAGE .env || \\
+        echo 'AR5IV_VALIDATOR_IMAGE=$VNU_DATED_TAG' >> .env
     docker compose pull
     docker compose up -d
-    docker compose ps          # both services 'healthy'
+    docker compose ps          # all three services up, two 'healthy'
     curl -fsS https://<your-domain>/api/version | jq .latexml_oxide.sha
     # → should print "$LATEXML_SHA"
 
-rollback (if it goes sideways):
-
-    cd /opt/ar5iv-editor/deploy
-    sed -i 's|/ar5iv-editor:latest|/ar5iv-editor:$DATE_TAG-$LATEXML_SHA|' .env
-    docker compose pull && docker compose up -d
+rollback (if it goes sideways): repin .env to the previous dated tags,
+then docker compose pull && docker compose up -d
 ${C_BOLD}=========================================================${C_RST}
 EOF
