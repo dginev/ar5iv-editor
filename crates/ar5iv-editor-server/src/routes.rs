@@ -167,6 +167,10 @@ fn workbench_config_json(scheme: &str, authority: &str, origin: &str) -> String 
             // local disk), offering the sample as the fallback button.
             "workbench.startupEditor": "none",
             "editor.minimap.enabled": false,
+            // LaTeX source paragraphs are typically one long physical line;
+            // wrap by default so the showcase opens readable without a
+            // horizontal scrollbar (users can still toggle with Alt+Z).
+            "editor.wordWrap": "on",
             "window.menuBarVisibility": "hidden"
         },
         "workspaceUri": { "scheme": "tmp", "path": "/ar5iv.code-workspace" }
