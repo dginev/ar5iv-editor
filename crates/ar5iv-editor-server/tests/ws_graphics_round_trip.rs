@@ -118,7 +118,7 @@ async fn includegraphics_resolves_and_path_is_rewritten() {
         format:      Some("html5".into()),
         preload:     vec!["graphicx.sty".into()],
     };
-    ws.send(Message::Text(serde_json::to_string(&req).unwrap().into()))
+    ws.send(Message::Text(serde_json::to_string(&req).unwrap()))
         .await
         .unwrap();
     let text = loop {

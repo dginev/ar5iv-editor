@@ -100,7 +100,7 @@ async fn ws_convert_round_trips_through_engine() {
         format:      Some("html5".into()),
         preload:     vec![],
     };
-    ws.send(Message::Text(serde_json::to_string(&req).unwrap().into()))
+    ws.send(Message::Text(serde_json::to_string(&req).unwrap()))
         .await
         .unwrap();
 
@@ -212,7 +212,7 @@ async fn ws_resolves_input_against_session_dir() {
         format:      Some("html5".into()),
         preload:     vec![],
     };
-    ws.send(Message::Text(serde_json::to_string(&req).unwrap().into()))
+    ws.send(Message::Text(serde_json::to_string(&req).unwrap()))
         .await
         .unwrap();
     let text = loop {

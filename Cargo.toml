@@ -60,14 +60,3 @@ overflow-checks = false
 inherits      = "release"
 lto           = "thin"
 codegen-units = 16
-
-# Mirror of latexml-oxide's workspace patch: its `portability-macos`
-# work consumes kpathsea 0.3 (subprocess-kpsewhich fallback) from a
-# git branch until published to crates.io. Workspace patches don't
-# propagate to path-dep consumers, so without this mirror the editor
-# fails to resolve whenever the engine checkout carries that work.
-# Harmless while the engine still requires ^0.2 from the registry —
-# cargo simply reports the patch as unused. Drop together with the
-# upstream patch once kpathsea 0.3.0 is on crates.io.
-[patch.crates-io]
-kpathsea = { git = "https://github.com/dginev/rust-kpathsea", branch = "subprocess-fallback" }

@@ -209,6 +209,11 @@ impl Converter {
     }
 }
 
+// `ArchiveResult`'s Err arm is `ConvertResponse` — the same rich response
+// shape (log / status / diagnostics / sources) the success path uses,
+// returned only on the cold archive-failure path. Boxing it would buy a
+// heap alloc and an Ok/Err size asymmetry for a negligible move; keep inline.
+#[allow(clippy::result_large_err)]
 fn worker_main(rx: std_mpsc::Receiver<Job>) {
     // Logger is installed in `main.rs` before tracing-subscriber, so the
     // worker thread doesn't need to do anything here. The previous
@@ -512,6 +517,8 @@ const ARCHIVE_CSS_LINKS: &str = "<link rel=\"stylesheet\" href=\"css/ar5iv-fonts
 ///
 /// Returns `Err(ConvertResponse)` carrying the log/status when nothing
 /// rendered, so the caller can surface the log instead of an empty ZIP.
+// See `worker_main`: `ConvertResponse` as the Err arm is intentional.
+#[allow(clippy::result_large_err)]
 fn convert_one_archive(session: &Session) -> ArchiveResult {
     // The project's detected main entry (set at session create / file-set
     // change), falling back to `main.tex`.

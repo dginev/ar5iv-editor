@@ -693,9 +693,9 @@ fn walk_for_export(
     cur: &Path,
     out: &mut Vec<(PathBuf, PathBuf)>,
 ) -> Result<(), AppError> {
-    let mut entries = std::fs::read_dir(cur)
+    let entries = std::fs::read_dir(cur)
         .map_err(|e| AppError::internal(format!("walk: {e}")))?;
-    while let Some(entry) = entries.next() {
+    for entry in entries {
         let entry = entry.map_err(|e| AppError::internal(format!("walk entry: {e}")))?;
         let ft = entry
             .file_type()
@@ -998,7 +998,6 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut buf);
         export_zip(src.path(), &mut cursor, &[]).unwrap();
-        drop(cursor);
 
         let dst = tempfile::tempdir().unwrap();
         let cfg = test_cfg();
@@ -1019,7 +1018,6 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut buf);
         export_zip(src.path(), &mut cursor, &[]).unwrap();
-        drop(cursor);
 
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&buf)).unwrap();
         let names: Vec<String> =

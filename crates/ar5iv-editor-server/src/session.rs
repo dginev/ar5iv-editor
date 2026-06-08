@@ -33,6 +33,13 @@ use crate::error::AppError;
 #[serde(transparent)]
 pub struct Token(String);
 
+impl Default for Token {
+    /// Mint a fresh random token — identical to [`Token::new`].
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Token {
     pub fn new() -> Self {
         let mut bytes = [0u8; 32];
@@ -394,7 +401,7 @@ impl SessionRegistry {
     /// check `user_id`.
     pub async fn get(&self, id: &SessionId) -> Result<Arc<Session>, AppError> {
         let inner = self.inner.read().await;
-        inner.by_id.get(id).cloned().ok_or_else(|| AppError::session_expired())
+        inner.by_id.get(id).cloned().ok_or_else(AppError::session_expired)
     }
 
     /// Lookup-or-create. If the (user, slot) pair already maps to a

@@ -1127,7 +1127,8 @@ dependencies = [
 [[package]]
 name = "kpathsea"
 version = "0.3.0"
-source = "git+https://github.com/dginev/rust-kpathsea?branch=subprocess-fallback#082e424daffe73cf97ced5ee84f947143ca97664"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52ad91491ecfbc6884363b58decdcf1f248b989e204f5405113059eb54bea67b"
 dependencies = [
  "kpathsea_sys",
  "which",
@@ -1136,9 +1137,12 @@ dependencies = [
 [[package]]
 name = "kpathsea_sys"
 version = "0.2.0"
-source = "git+https://github.com/dginev/rust-kpathsea?branch=subprocess-fallback#082e424daffe73cf97ced5ee84f947143ca97664"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8cfad4c2f885e8926298fe8d8a71aa4fa5d11538e4acf4f74d996a99e5fa3c9"
 dependencies = [
+ "cc",
  "pkg-config",
+ "which",
 ]
 
 [[package]]
