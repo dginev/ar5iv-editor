@@ -9,10 +9,21 @@ services:
     restart: unless-stopped
     environment:
       BIND: ":8080"
-      TARGET: "http://ar5iv-editor:3000"
+      # This single Anubis instance is SHARED: it gates the editor *and*
+      # corpora.latexml.rs (the CorTeX reporting UI, whose combinatorial report
+      # URLs are a bot-crawl DB-load trap). Anubis has exactly one TARGET, and a
+      # RAM-tight box rules out a second instance — so point it at a tiny
+      # host-side Caddy router (`http://:8181`) that splits by Host:
+      #   corpora.latexml.rs -> cortex (over a reverse-SSH tunnel from the desktop)
+      #   everything else     -> this editor (published on loopback below)
+      # See the host Caddyfile and deploy/cloud-demo.md.
+      TARGET: "http://host.docker.internal:8181"
       POLICY_FNAME: "/data/cfg/botPolicies.yaml"
       ED25519_PRIVATE_KEY_HEX: "${ANUBIS_KEY:?set ANUBIS_KEY in .env to a hex-encoded ed25519 private key}"
       COOKIE_DOMAIN: "${COOKIE_DOMAIN:-}"
+    # The router runs on the Docker host, not in this network.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./anubis.yaml:/data/cfg/botPolicies.yaml:ro
     ports:
@@ -25,6 +36,10 @@ services:
     restart: unless-stopped
     expose:
       - "3000"
+    # Also published on host loopback so the shared-Anubis host router (:8181)
+    # can reach the editor by Host. Loopback-only — Caddy remains the public edge.
+    ports:
+      - "127.0.0.1:3000:3000"
     environment:
       AR5IV_EDITOR_BIND: "0.0.0.0:3000"
       AR5IV_EDITOR_STATIC_DIR: "/app/frontend/dist"
