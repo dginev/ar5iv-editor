@@ -101,6 +101,7 @@ fn convert_with_search_paths(
                     stylesheet: Some("resources/XSLT/LaTeXML-html5.xsl"),
                     destination: None,
                     source_directory: None,
+                    search_paths: &[],
                     nodefaultresources: true,
                     css_files: &[],
                     js_files: &[],

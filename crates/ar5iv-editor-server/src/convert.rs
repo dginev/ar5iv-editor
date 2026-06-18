@@ -435,6 +435,10 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         // them to `/api/session/{id}/files/<rel>` URLs the browser
         // can fetch.
         source_directory: Some(&session_dir_str),
+        // No extra `--path` resource dirs: we ship no external --css/--js
+        // files, and the session dir is already on the search path via
+        // `source_directory` above.
+        search_paths: &[],
         nodefaultresources: true,
         css_files: &[],
         js_files: &[],
@@ -597,6 +601,10 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
         stylesheet: Some("resources/XSLT/LaTeXML-html5.xsl"),
         destination: Some(&dest_str),
         source_directory: Some(&session_dir_str),
+        // No extra `--path` resource dirs: we ship no external --css/--js
+        // files, and the session dir is already on the search path via
+        // `source_directory` above.
+        search_paths: &[],
         nodefaultresources: true,
         css_files: &[],
         js_files: &[],
