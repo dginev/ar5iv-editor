@@ -205,7 +205,7 @@ export class FilePanel {
       icon.className = "ftree-icon";
       // Folders get a collapse-state arrow; files have no glyph —
       // their filename + extension is the visual signal, in keeping
-      // with the terminal aesthetic of the timings strip.
+      // with the monospace aesthetic of the timings strip.
       icon.textContent = n.isDir
         ? this.collapsed.has(n.path) ? "▶" : "▼"
         : "";

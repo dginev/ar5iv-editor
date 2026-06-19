@@ -16,8 +16,8 @@ export type { SourceNavTarget };
 // structural CSS and the shadow-DOM caveats.
 // ---------------------------------------------------------------------------
 
-// Map ar5iv's color tokens onto the editor chrome tokens (paper / midnight /
-// terminal), so the preview surface matches the editor surface in every mode.
+// Map ar5iv's color tokens onto the editor chrome tokens (light / dark),
+// so the preview surface matches the editor surface in every mode.
 // Chrome vars cascade through the shadow boundary; each has the ar5iv default
 // as a fallback. `--ar5iv-sync-color` (consumed by the core's arrival-flash)
 // is the chrome accent.
@@ -36,17 +36,10 @@ const HOST_TOKEN_CSS = `
     --error-text-color:    var(--bad, #d8000c);
     --ar5iv-sync-color:    var(--accent, #026ecb);
   }
-  /* Terminal chrome: replace the proportional body + heading typefaces with the
-     chrome's monospace stack so the preview reads in the same retro-CRT
-     register. Math keeps STIX (mono fonts can't render math well). */
-  :host([data-chrome="terminal"]) {
-    --headings-font-family: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-    --text-font-family:     "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-  }
   /* Override ar5iv.css's hard-coded dark palette ([data-theme="dark"],
      specificity 0,0,1) with the chrome theme's own dark values via an
-     ID-qualified selector (specificity 1,0,1) — reuse midnight / terminal
-     palettes instead of ar5iv's #0d1117 + #c9d1d9 pair. --image-color /
+     ID-qualified selector (specificity 1,0,1) — reuse the dark theme's
+     palette instead of ar5iv's #0d1117 + #c9d1d9 pair. --image-color /
      --image-background-color stay at ar5iv's dark defaults (per-image filter
      inversion, independent of chrome theming). */
   #preview-root-host[data-theme="dark"] {
@@ -104,17 +97,6 @@ export type PreviewTheme = "light" | "dark";
  */
 export function setPreviewTheme(theme: PreviewTheme): void {
   preview().setTheme(theme);
-}
-
-/** Mirror the chrome theme (`paper` / `midnight` / `terminal`) onto the shadow
- *  host so its CSS can layer chrome-specific styling inside the preview — today
- *  only the terminal palette uses it (monospace body/heading via the
- *  `:host([data-chrome="terminal"])` rule). Math typography stays put: STIX is
- *  the source of truth for math glyphs. */
-export function setPreviewChromeTheme(chrome: string): void {
-  const previewEl = document.getElementById("preview");
-  if (!previewEl) return;
-  previewEl.setAttribute("data-chrome", chrome);
 }
 
 /** Paint a centered placeholder string into the preview pane. Used when the

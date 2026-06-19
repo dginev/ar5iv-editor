@@ -158,7 +158,7 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
   // (`#3e4451` over `#282c34` in oneDark, `#bbdfff` over white in
   // githubLight) that read as invisible against our chrome surfaces.
   // The values are accent-tinted via the chrome's `--accent` token
-  // so each chrome theme (paper / midnight / terminal) gets a hue
+  // so each chrome theme (light / dark) gets a hue
   // that matches its palette.
   //
   // `!important` is required because both bundled themes inject

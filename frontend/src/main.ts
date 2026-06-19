@@ -1,7 +1,7 @@
 import "./styles.css";
 import { createEditor, type EditorTheme } from "./editor.ts";
 import { ConvertClient, type ConvertResponse, type Diagnostic } from "./ws.ts";
-import { renderResult, showLog, showEmptyState, setPreviewTheme, setPreviewChromeTheme, scrollPreviewToSource, bindPreviewSourceNav, recoverSourcePosition } from "./preview.ts";
+import { renderResult, showLog, showEmptyState, setPreviewTheme, scrollPreviewToSource, bindPreviewSourceNav, recoverSourcePosition } from "./preview.ts";
 import { splitPreamble, preloadFor, locateDiagnosticToken } from "../../frontend-core/index";
 import { EXAMPLES_LIST } from "./examples.ts";
 import {
@@ -16,7 +16,7 @@ import { showToast } from "./toast.ts";
 
 const DEBOUNCE_MS = 300;
 
-type ChromeTheme = "paper" | "midnight" | "terminal";
+type ChromeTheme = "light" | "dark";
 
 const TEXT_EXTENSIONS = new Set([
   "tex", "sty", "cls", "bib", "bst", "bbl", "def", "ldf",
@@ -24,12 +24,12 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 
 function chromeToEditor(t: ChromeTheme | string | undefined): EditorTheme {
-  return t === "paper" ? "light" : "dark";
+  return t === "dark" ? "dark" : "light";
 }
 
 function readChromeTheme(): ChromeTheme {
   const t = document.documentElement.dataset.theme;
-  return t === "paper" || t === "midnight" || t === "terminal" ? t : "paper";
+  return t === "light" || t === "dark" ? t : "light";
 }
 
 function statusEl(): HTMLElement {
@@ -311,10 +311,8 @@ async function bootVersionMarker(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const initialChromeTheme = readChromeTheme();
-  const initialEditorTheme = chromeToEditor(initialChromeTheme);
+  const initialEditorTheme = chromeToEditor(readChromeTheme());
   setPreviewTheme(initialEditorTheme);
-  setPreviewChromeTheme(initialChromeTheme);
 
   const host = document.getElementById("codemirror-host");
   if (!host) return;
@@ -331,7 +329,6 @@ async function main(): Promise<void> {
     const e = chromeToEditor(detail?.theme);
     editor.setTheme(e);
     setPreviewTheme(e);
-    if (detail?.theme) setPreviewChromeTheme(detail.theme);
   });
 
   // -----------------------------------------------------------------

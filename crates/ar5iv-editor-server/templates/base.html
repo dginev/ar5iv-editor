@@ -10,13 +10,16 @@
     <script>
       (function () {
         var KEY = "ar5iv-editor-theme";
-        var THEMES = ["paper", "midnight", "terminal"];
+        var THEMES = ["light", "dark"];
+        // Migrate the pre-rename names so saved prefs survive the light/dark rename.
+        var LEGACY = { paper: "light", midnight: "dark" };
         var saved = localStorage.getItem(KEY);
+        saved = LEGACY[saved] || saved;
         var initial = THEMES.indexOf(saved) >= 0
           ? saved
           : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
-              ? "midnight"
-              : "paper");
+              ? "dark"
+              : "light");
         document.documentElement.dataset.theme = initial;
         window.__ar5ivTheme = {
           get: function () { return document.documentElement.dataset.theme; },
@@ -45,6 +48,7 @@
         <a href="/vscode">VS Code</a>
         <a href="/schemas">Schemas</a>
         <a href="/validate">Validator</a>
+        <a href="https://corpora.latexml.rs">Corpora</a>
         <a href="/about">About</a>
         <a href="/help">Help</a>
         <button id="theme-toggle" type="button" title="Cycle theme">Theme</button>
@@ -55,16 +59,10 @@
       (function () {
         var btn = document.getElementById("theme-toggle");
         if (!btn) return;
-        // Glyph per theme: sun for paper (light), crescent for
-        // midnight (dark), CSS-drawn block cursor for terminal.
-        // The terminal glyph is a `<span>` rather than a text
-        // character because every Unicode "underscore-like"
-        // codepoint sits at the bottom of its em box; a CSS bar
-        // gives us pixel-perfect vertical centring with the label.
+        // Glyph per theme: sun for light, crescent for dark.
         var GLYPH_HTML = {
-          paper:    "☀",
-          midnight: "☾",
-          terminal: "<span class=\"theme-toggle__cursor\"></span>",
+          light: "☀",
+          dark:  "☾",
         };
         var label = function () {
           var t = window.__ar5ivTheme.get();

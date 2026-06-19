@@ -1,85 +1,87 @@
 /* =========================================================================
    ar5iv-editor — chrome stylesheet
-   Themes:
-     paper    (default light) — warm paper, ink text, muted purple accent
-     midnight (default dark)  — deep ink, off-white text, same accent
-     terminal (alt dark)      — slate background, phosphor-green accents
+
+   Two productized skins built on one token contract — identical names and
+   ordering in each block, so the skins diff cleanly side by side:
+     light  — warm paper surface, ink text, brand-orange accent (default)
+     dark   — deep ink surface, off-white text, brand-amber accent
+
+   Accent is the latexml.rs brand orange (favicon: amber #fd982c →
+   vermilion #fa502e). Paper darkens it to a burnt sienna so links clear
+   WCAG AA on the cream surface; the dark skin lifts it to a warm amber.
+   `--warn` lives in gold (not orange) so a status colour never
+   reads as the brand accent.
+
+   Token contract (every token below appears, in this order, in both skins):
+     surfaces  --bg / --bg-elev / --bg-sunken      (sunken < base < elevated)
+     ink       --ink / --ink-soft / --ink-muted    (AAA → AA → AA-secondary)
+     lines     --rule / --rule-soft
+     brand     --accent / --accent-soft / --link (= accent) / --link-hover
+     code      --code-bg                            (the subtle recessed tone)
+     depth     --shadow / --shadow-lg
+     status    --ok / --warn / --bad
+   --signal and the --serif/--sans/--mono stacks are declared once on :root
+   (in the light block) and inherited by dark.
+
    The preview pane has its own ar5iv.css palette inside its shadow root and
    is unaffected by these rules — only the chrome (header, nav, landing,
    prose, editor shell) lives here.
    ========================================================================= */
 
 :root,
-:root[data-theme="paper"] {
-  --bg:          #dcdbd2;          /* near-neutral cream — close to #dedede, just enough warmth to read as paper */
-  --bg-elev:     #e6e5dc;          /* gently lifted surface — chrome, cards, preview pane, editor */
-  --bg-sunken:   #cdccc3;          /* slightly deeper — header / footer strips, code blocks */
-  --ink:         #1a1a1a;          /* AAA on bg-elev (≈12.4:1) */
-  --ink-soft:    #4a4a4a;          /* AA  on bg-elev (≈6.4:1) */
-  --ink-muted:   #6e6e68;          /* AA  on bg     (≈4.6:1) — bumped slightly darker to keep contrast */
-  --rule:        #b9b8af;
-  --rule-soft:   #ceccc2;
-  --accent:      #7a3e9d;
-  --accent-soft: #ece1f5;
+:root[data-theme="light"] {
+  /* surfaces — warm cream, evenly stepped */
+  --bg:          #dcdbd2;          /* page — near-neutral cream */
+  --bg-elev:     #e7e6dd;          /* lifted: chrome, cards, preview, editor */
+  --bg-sunken:   #cecdc3;          /* recessed: header/footer strips, code */
+  /* ink — measured on bg-elev unless noted */
+  --ink:         #1b1a17;          /* ≈13.9:1 (AAA) */
+  --ink-soft:    #4c4944;          /* ≈7.2:1  (AA)  */
+  --ink-muted:   #615d53;          /* ≈4.7:1 on bg  (AA secondary) */
+  --rule:        #bbb9ae;
+  --rule-soft:   #d0cec3;
+  /* brand — latexml.rs orange, darkened to a burnt sienna for AA on cream */
+  --accent:      #a83e06;          /* ≈5.0:1 on bg-elev */
+  --accent-soft: #f6e0cf;          /* peach tint — note-highlight backdrops */
   --link:        var(--accent);
-  --link-hover:  #9a4ec0;
-  --code-bg:     #cdccc3;
+  --link-hover:  #c2510c;          /* flares brighter; underlined on hover */
+  --code-bg:     var(--bg-sunken);
   --shadow:      0 1px 2px rgba(40, 30, 20, 0.06);
-  --shadow-lg:  0 6px 24px rgba(40, 30, 20, 0.10);
-  --ok:     #2f7d3f;
-  --warn:   #c47e1a;
+  --shadow-lg:   0 6px 24px rgba(40, 30, 20, 0.10);
+  /* status — warn in gold so it never reads as the orange accent */
+  --ok:     #2c7138;
+  --warn:   #8a6000;
   --bad:    #b32424;
-  --signal: var(--ink-soft);     /* slowest-stage chip — same hue as other values, distinguished by weight + glow */
+  --signal: var(--ink-soft);     /* slowest-stage chip — set apart by weight + glow, not hue */
   --serif: "Iowan Old Style", "Charter", "Source Serif Pro", "STIX Two Text", Georgia, serif;
   --sans:  ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono:  "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 }
 
-:root[data-theme="midnight"] {
-  --bg:          #161618;
-  --bg-elev:    #1d1d22;
-  --bg-sunken:  #101013;
-  --ink:         #e8e4dc;
-  --ink-soft:   #b8b3a8;
-  --ink-muted:  #807a70;
-  --rule:        #2a2a30;
-  --rule-soft:  #1f1f24;
-  --accent:     #c79bff;
-  --accent-soft:#2a1f3a;
+:root[data-theme="dark"] {
+  /* surfaces — warm-neutral deep ink */
+  --bg:          #161517;          /* page */
+  --bg-elev:     #1e1d20;          /* lifted: chrome, cards, preview, editor */
+  --bg-sunken:   #100f11;          /* recessed: header/footer strips */
+  /* ink — measured on bg-elev unless noted */
+  --ink:         #ece7df;          /* ≈13.6:1 (AAA) */
+  --ink-soft:    #bab4a9;          /* ≈8.1:1  (AA)  */
+  --ink-muted:   #8a8377;          /* ≈4.5:1  (AA secondary) */
+  --rule:        #2c2a30;
+  --rule-soft:   #201f23;
+  /* brand — latexml.rs orange lifted to a warm amber for the dark surface */
+  --accent:      #f59042;          /* ≈7.2:1 on bg-elev */
+  --accent-soft: #3a2410;          /* warm-brown tint — note-highlight backdrops */
   --link:        var(--accent);
-  --link-hover: #d9b8ff;
-  --code-bg:    #1f1f24;
+  --link-hover:  #ffab63;
+  --code-bg:     var(--rule-soft);
   --shadow:      0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-lg:  0 6px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg:   0 6px 24px rgba(0, 0, 0, 0.5);
+  /* status — warn in gold, clear of the amber accent */
   --ok:     #6dd28a;
-  --warn:   #f5b042;
+  --warn:   #e8c14a;
   --bad:    #f06363;
-  /* --signal inherits from :root (var(--ink-soft) — re-resolves under this theme) */
-}
-
-:root[data-theme="terminal"] {
-  --bg:          #0e1116;
-  --bg-elev:    #141821;
-  --bg-sunken:  #090b10;
-  --ink:         #d6d8c8;
-  --ink-soft:   #a4a896;
-  --ink-muted:  #6c7060;
-  --rule:        #1d2230;
-  --rule-soft:  #161a24;
-  --accent:     #7cf089;
-  --accent-soft:#10301a;
-  --link:        var(--accent);
-  --link-hover: #aef5b7;
-  --code-bg:    #0a0d12;
-  --shadow:      0 0 0 1px rgba(124, 240, 137, 0.06);
-  --shadow-lg:  0 0 0 1px rgba(124, 240, 137, 0.10), 0 0 24px rgba(124, 240, 137, 0.06);
-  --ok:     #7cf089;
-  --warn:   #f5b042;
-  --bad:    #f06363;
-  /* --signal inherits from :root */
-  /* Mono everywhere on the terminal theme — that's the whole point. */
-  --serif: var(--mono);
-  --sans:  var(--mono);
+  /* --signal and the font stacks inherit from :root (light block) above. */
 }
 
 /* -------- base -------- */
@@ -173,12 +175,11 @@ body[data-page="help"]     .ar5iv-header nav a[href="/help"] {
 }
 
 /* Pin the theme toggle to a fixed width so cycling between
-   `paper` / `midnight` / `terminal` doesn't reflow the rest of the
-   nav. The terminal chrome uses a monospaced font (wider per glyph)
-   so the floor has to clear `terminal` (8 chars) under that
-   typeface, not just under the proportional default. */
+   `light` and `dark` doesn't reflow the rest of the nav. The
+   floor clears the longer label (`light`, 5 chars) plus the
+   glyph and gap under the proportional nav font. */
 .ar5iv-header nav #theme-toggle {
-  min-width: 7rem;
+  min-width: 5.5rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -187,7 +188,7 @@ body[data-page="help"]     .ar5iv-header nav a[href="/help"] {
 }
 /* Both spans share a fixed 1-em box so flex centering produces a
    common axis. Without `line-height: 1` the surrounding leading
-   shifts the visual baselines apart and `☀` / `☾` / `_` line up at
+   shifts the visual baselines apart and `☀` / `☾` line up at
    different heights. */
 .theme-toggle__glyph,
 .theme-toggle__label {
@@ -195,31 +196,6 @@ body[data-page="help"]     .ar5iv-header nav a[href="/help"] {
   align-items: center;
   height: 1em;
   line-height: 1;
-}
-/* CSS-drawn block cursor for the terminal theme. Sized in `em` so
-   it tracks the nav's font-size; blink animation applied to the
-   bar itself (not the wrapper) so the wrapper still flex-centres
-   with the label. */
-.theme-toggle__cursor {
-  display: inline-block;
-  width: 0.55em;
-  height: 0.18em;
-  background: currentColor;
-  border-radius: 1px;
-  /* Sit at the bottom of the glyph box like a real `_`, overriding
-     the parent flex's `align-items: center`. */
-  align-self: flex-end;
-  margin-bottom: 0.05em;
-  animation: theme-toggle-blink 1.06s steps(2, end) infinite;
-}
-/* Blink the cursor only in the terminal theme. `steps(2, end)`
-   gives a hard on/off rather than a smooth fade — VT100 era. */
-@keyframes theme-toggle-blink {
-  0%, 50% { opacity: 1; }
-  50.01%, 100% { opacity: 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .theme-toggle__cursor { animation: none; }
 }
 
 /* -------- landing -------- */
@@ -613,7 +589,7 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
   font-size: 0.72rem;
   color: var(--ink-soft);
 }
-/* Header actions follow the same terminal-strip aesthetic as the
+/* Header actions follow the same monospace status-strip aesthetic as the
    timings panel and the latexml-oxide version marker on the right:
    monospace, small, muted-by-default, accent on hover. Each is a
    real `<button>` with a subtle outlined affordance — visible at
@@ -1088,10 +1064,10 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
   letter-spacing: 0.08em;
   font-family: var(--sans);
   font-size: 0.66rem;
-  /* Tint the caption with the theme's accent so paper / midnight / terminal
-     each get a distinct caption hue (dusty purple / lilac / pale green),
+  /* Tint the caption with the theme's accent so light / dark
+     each get a distinct caption hue (burnt orange / warm amber),
      and lift the base off ink-muted so contrast against bg-sunken hits AA
-     in the paper theme. */
+     in the light theme. */
   color: color-mix(in oklab, var(--ink-soft) 75%, var(--accent));
   flex: 0 0 auto;
 }
@@ -1168,10 +1144,10 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
 .codemirror-host { flex: 1; min-height: 0; overflow: hidden; }
 .codemirror-host .cm-editor { height: 100%; }
 
-/* In the paper theme, override the bundled `githubLight` theme's
+/* In the light theme, override the bundled `githubLight` theme's
    pure-white surface so the editor sits on the same cream as the
    rest of the chrome. Specificity tied to the data-theme keeps
-   midnight/terminal's One Dark palette untouched.
+   the dark theme's One Dark palette untouched.
    `.cm-content` is intentionally NOT included: the selection layer
    is a sibling of `.cm-content` inside `.cm-scroller` and renders
    beneath it, so giving `.cm-content` an opaque background covers
@@ -1179,16 +1155,16 @@ main { display: flex; flex-direction: column; min-height: calc(100vh - var(--hea
    through `.cm-content`'s default transparent fill. Selection
    colours themselves are configured natively via
    `EditorView.theme(...)` in `editor.ts` — no CSS override here. */
-:root[data-theme="paper"] .codemirror-host .cm-editor,
-:root[data-theme="paper"] .codemirror-host .cm-editor .cm-scroller {
+:root[data-theme="light"] .codemirror-host .cm-editor,
+:root[data-theme="light"] .codemirror-host .cm-editor .cm-scroller {
   background-color: var(--bg-elev);
 }
-:root[data-theme="paper"] .codemirror-host .cm-editor .cm-gutters {
+:root[data-theme="light"] .codemirror-host .cm-editor .cm-gutters {
   background-color: var(--bg-sunken);
   border-right: 1px solid var(--rule-soft);
 }
-:root[data-theme="paper"] .codemirror-host .cm-editor .cm-activeLine,
-:root[data-theme="paper"] .codemirror-host .cm-editor .cm-activeLineGutter {
+:root[data-theme="light"] .codemirror-host .cm-editor .cm-activeLine,
+:root[data-theme="light"] .codemirror-host .cm-editor .cm-activeLineGutter {
   background-color: color-mix(in oklab, var(--bg-sunken) 50%, var(--bg-elev));
 }
 
