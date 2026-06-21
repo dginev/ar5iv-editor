@@ -9,7 +9,7 @@
 #
 # Usage:
 #     deploy/release.sh
-#         Sync latexml-oxide to master, build the image, run the
+#         Sync latexml-oxide to main, build the image, run the
 #         local smoke test. No registry push, no source tag.
 #
 #     deploy/release.sh --push
@@ -22,7 +22,7 @@
 #
 #     deploy/release.sh --no-sync
 #         Don't fetch/pull latexml-oxide; build against whatever is
-#         currently checked out. Useful for testing a non-master
+#         currently checked out. Useful for testing a non-main
 #         feature branch.
 #
 #     deploy/release.sh --allow-dirty
@@ -50,7 +50,7 @@
 #     LATEXML_PATH        — checkout location of latexml-oxide
 #                           (default: ../latexml-oxide)
 #     LATEXML_OXIDE_REF   — branch/tag/sha to build against
-#                           (default: master)
+#                           (default: main)
 #     IMAGE_BASE          — registry path without a tag
 #                           (default: ghcr.io/<owner>/<repo>/ar5iv-editor,
 #                            inferred from `git remote get-url origin`)
@@ -117,7 +117,7 @@ done
 # -- paths + dependency probe -----------------------------------------------
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LATEXML_PATH="${LATEXML_PATH:-$(cd "$REPO_ROOT/.." && pwd)/latexml-oxide}"
-LATEXML_OXIDE_REF="${LATEXML_OXIDE_REF:-master}"
+LATEXML_OXIDE_REF="${LATEXML_OXIDE_REF:-main}"
 # Match `build-and-push.sh`'s IMAGE convention exactly:
 # `ghcr.io/<owner>/<repo>/ar5iv-editor:tag` — three path segments,
 # the last one a literal `ar5iv-editor`. GHCR organises packages
@@ -198,8 +198,8 @@ AR5IV_SHA=$(git -C "$REPO_ROOT" rev-parse --short HEAD)
 AR5IV_BRANCH=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)
 [[ "$AR5IV_BRANCH" != "main" ]] && \
     warn "ar5iv-editor is on '$AR5IV_BRANCH', not 'main'"
-[[ "$LATEXML_OXIDE_REF" != "master" ]] && \
-    warn "latexml-oxide ref is '$LATEXML_OXIDE_REF', not 'master'"
+[[ "$LATEXML_OXIDE_REF" != "main" ]] && \
+    warn "latexml-oxide ref is '$LATEXML_OXIDE_REF', not 'main'"
 phase_end
 
 # ---------------------------------------------------------------------------

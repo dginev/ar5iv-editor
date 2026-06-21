@@ -285,12 +285,12 @@ cp "$VALIDATOR_PATH/build/dist/vnu.jar" "$CTX/vnu/vnu.jar"
 
 # Capture the latexml-oxide commit identity so the binary can render
 # a "powered by latexml-oxide @<sha>" link in the preview header.
-# Pinned to the tip of `master` rather than the local checkout's HEAD
-# — the constants advertise "we built against latexml-oxide master
+# Pinned to the tip of `main` rather than the local checkout's HEAD
+# — the constants advertise "we built against latexml-oxide main
 # @<sha>" and the SHA needs to mean the same thing regardless of
 # which branch the build host happens to be on. Falls back to
-# "unknown" if the checkout doesn't have a `master` ref.
-LATEXML_OXIDE_REF="${LATEXML_OXIDE_REF:-master}"
+# "unknown" if the checkout doesn't have a `main` ref.
+LATEXML_OXIDE_REF="${LATEXML_OXIDE_REF:-main}"
 LATEXML_OXIDE_SHA=$(
     git -C "$LATEXML_PATH" rev-parse --short "$LATEXML_OXIDE_REF" 2>/dev/null \
         || echo "unknown"

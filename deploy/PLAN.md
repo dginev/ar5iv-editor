@@ -30,10 +30,10 @@ state from `_base`). Push it to ghcr.io so the Vultr box can pull
 it.
 
 The version marker in the preview header pins to whatever
-`master` of `latexml-oxide` was at build time
-(`crates/ar5iv-editor-server/build.rs` reads the SHA from `git -C ../latexml-oxide rev-parse master`),
+`main` of `latexml-oxide` was at build time
+(`crates/ar5iv-editor-server/build.rs` reads the SHA from `git -C ../latexml-oxide rev-parse main`),
 so re-running `build-and-push.sh` after pulling latexml-oxide
-master automatically refreshes the "powered by latexml-oxide @<sha>"
+main automatically refreshes the "powered by latexml-oxide @<sha>"
 link in the UI without any code change.
 
 ```sh

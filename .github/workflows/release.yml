@@ -23,7 +23,7 @@ on:
     inputs:
       latexml_ref:
         description: 'latexml-oxide git ref to build against'
-        default: 'master'
+        default: 'main'
 
 permissions:
   contents: write
@@ -46,7 +46,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: dginev/latexml-oxide
-          ref: ${{ github.event.inputs.latexml_ref || 'master' }}
+          ref: ${{ github.event.inputs.latexml_ref || 'main' }}
           path: latexml-oxide
           fetch-depth: 0
           # latexml-oxide is a PRIVATE repo, so the default GITHUB_TOKEN (scoped

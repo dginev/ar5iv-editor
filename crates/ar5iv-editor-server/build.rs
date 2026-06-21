@@ -1,33 +1,33 @@
 //! Build script: capture the `latexml-oxide` short SHA and commit
 //! date as compile-time constants in the binary.
 //!
-//! The values are deliberately pinned to the **tip of master** in
+//! The values are deliberately pinned to the **tip of main** in
 //! the latexml-oxide checkout, not whatever branch happens to be
 //! checked out locally. We're advertising "this binary was built
-//! against latexml-oxide master @<sha>" and the SHA needs to mean
+//! against latexml-oxide main @<sha>" and the SHA needs to mean
 //! the same thing across every developer's working tree.
 //!
 //! Two sources, in order:
 //!
 //! 1. Build-args set at the docker build stage (the production
-//!    path). `deploy/build-and-push.sh` resolves `master` against
+//!    path). `deploy/build-and-push.sh` resolves `main` against
 //!    the sibling `latexml-oxide` checkout and passes the result as
 //!    `LATEXML_OXIDE_SHA` / `LATEXML_OXIDE_DATE` build-args, which
 //!    the Dockerfile re-exports as env vars.
 //!
-//! 2. A direct `git -C ../../../latexml-oxide ... master` call on
+//! 2. A direct `git -C ../../../latexml-oxide ... main` call on
 //!    the local filesystem (the `cargo run` / `cargo test` path).
-//!    Uses the local `master` ref; the user is responsible for
+//!    Uses the local `main` ref; the user is responsible for
 //!    `git pull`'ing on their checkout if they want freshly-built
 //!    constants.
 //!
 //! Falls back to `"unknown"` so a freshly-cloned tree without a
-//! local `master` ref still builds (`cargo run` works; the version
+//! local `main` ref still builds (`cargo run` works; the version
 //! marker just shows "unknown").
 
 use std::process::Command;
 
-const REF: &str = "master";
+const REF: &str = "main";
 
 fn main() {
     println!("cargo:rerun-if-env-changed=LATEXML_OXIDE_SHA");
