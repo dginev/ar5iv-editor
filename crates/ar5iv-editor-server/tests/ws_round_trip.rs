@@ -99,6 +99,7 @@ async fn ws_convert_round_trips_through_engine() {
         profile:     Some("fragment".into()),
         format:      Some("html5".into()),
         preload:     vec![],
+        source:      None,
     };
     ws.send(Message::Text(serde_json::to_string(&req).unwrap()))
         .await
@@ -211,6 +212,7 @@ async fn ws_resolves_input_against_session_dir() {
         profile:     Some("fragment".into()),
         format:      Some("html5".into()),
         preload:     vec![],
+        source:      None,
     };
     ws.send(Message::Text(serde_json::to_string(&req).unwrap()))
         .await

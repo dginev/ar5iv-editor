@@ -2,7 +2,7 @@ import "./styles.css";
 import { createEditor, type EditorTheme } from "./editor.ts";
 import { ConvertClient, type ConvertResponse, type Diagnostic } from "./ws.ts";
 import { renderResult, showLog, showEmptyState, setPreviewTheme, scrollPreviewToSource, bindPreviewSourceNav, recoverSourcePosition } from "./preview.ts";
-import { splitPreamble, preloadFor, locateDiagnosticToken } from "../../frontend-core/index";
+import { splitPreamble, preloadFor, hasDocumentclass, locateDiagnosticToken } from "../../frontend-core/index";
 import { EXAMPLES_LIST } from "./examples.ts";
 import {
   SessionClient,
@@ -15,6 +15,11 @@ import { FilePanel } from "./files.ts";
 import { showToast } from "./toast.ts";
 
 const DEBOUNCE_MS = 300;
+// Ceiling on how long a continuous typer waits for a preview. A plain
+// trailing debounce never fires while keys keep landing < DEBOUNCE_MS apart,
+// so a fast typer would see NO preview until they pause. Force one at least
+// this often after the first un-previewed edit.
+const CONVERT_MAX_WAIT_MS = 1500;
 
 type ChromeTheme = "light" | "dark";
 
@@ -211,7 +216,7 @@ function applyHeaderBadge(unanchored: Diagnostic[]): void {
   const headerEl = document
     .querySelector<HTMLElement>(".pane-source > .pane-header");
   if (!headerEl) return;
-  let badge = document.getElementById("diag-badge");
+  let badge = document.getElementById("diag-badge") as HTMLButtonElement | null;
   if (!unanchored.length) {
     if (badge) badge.remove();
     return;
@@ -427,6 +432,7 @@ async function main(): Promise<void> {
   function matchesActiveBuffer(source: string | undefined): boolean {
     if (!source) return false;
     if (source === "Anonymous String") return true;
+    if (activePath === null) return false;
     if (source === activePath) return true;
     // Strip extension (`full_article.tex` → `full_article`).
     const dot = activePath.lastIndexOf(".");
@@ -704,6 +710,9 @@ async function main(): Promise<void> {
   // -----------------------------------------------------------------
   let nextId = 1;
   let timer: number | null = null;
+  /** When the first edit of the current un-previewed burst happened, for the
+   *  max-wait ceiling. Reset to null whenever a convert actually fires. */
+  let firstPendingEditAt: number | null = null;
   /** Paint the preview pane's "no .tex to render" placeholder when
    *  the session has no convertible source file. Idempotent — safe
    *  to call from any code path that just changed the file set. */
@@ -730,7 +739,7 @@ async function main(): Promise<void> {
    *    - active path was deleted out from under us and no
    *      replacement has been picked yet (would otherwise surface as
    *      "active_file: No such file or directory" server-side) */
-  const scheduleConvert = (scrollToCursor = false): number | null => {
+  const scheduleConvert = (scrollToCursor = false, source?: string): number | null => {
     if (!client || !activePath) {
       maybeShowEmptyState();
       return null;
@@ -753,12 +762,15 @@ async function main(): Promise<void> {
       const pos = editor.getCursorPos();
       requestScroll.set(id, { line: pos.line, col: pos.col, token: pos.token, file: activePath });
     }
-    const tex = editor.getSource();
+    const tex = source ?? editor.getSource();
     const { preamble } = splitPreamble(tex);
     client.send({
       id,
       active_file: activePath,
       version: lastVersion,
+      // Inline source rides the frame only on the fast path (caller passes
+      // it); the server then converts it directly, skipping the disk read.
+      source,
       preamble: preamble ?? undefined,
       profile: "fragment",
       format: "html5",
@@ -770,36 +782,89 @@ async function main(): Promise<void> {
     return id;
   };
 
-  editor.onChange((path, tex) => {
-    const cc = charCountEl();
-    if (cc) cc.textContent = `${tex.length.toLocaleString()} chars`;
-    if (timer !== null) window.clearTimeout(timer);
-    timer = window.setTimeout(async () => {
-      timer = null;
-      try {
-        const ack = await session.putText(path, tex);
-        lastVersion = ack.version;
-        scheduleConvert(true);
-      } catch (e) {
-        if (e instanceof SessionExpiredError) {
-          statusEl().textContent = "session expired — reopening";
-          await session.reopen();
-          rebuildWsClient();
-          try {
-            const ack2 = await session.putText(path, tex);
-            lastVersion = ack2.version;
-            scheduleConvert(true);
-          } catch (e2) {
-            showToast(`Save failed after reconnect: ${e2}`, "error");
-            statusEl().textContent = "save failed";
+  /** Run one debounced edit→preview cycle for `path`.
+   *
+   *  Fast path (single-`.tex` document): the active file is provably the
+   *  project's main entry, so we carry its bytes inline on the convert frame
+   *  and DON'T await the HTTP PUT — the server converts the inline source
+   *  directly, collapsing the former PUT→convert round-trip into one. The PUT
+   *  still fires (fire-and-forget) to persist the file for reload/download and
+   *  as a safety net if the conversion falls back to the disk-reading lane.
+   *
+   *  Slow path (multi-file project, or a fragment that routes to the
+   *  in-process lane): the engine resolves the project — and `\input`
+   *  siblings — from disk, so the buffer must land there first; PUT then
+   *  convert, as before. */
+  const runConvertForEdit = async (path: string): Promise<void> => {
+    const tex = editor.getSource();
+    const texFiles = session.envelope.files.filter(
+      (f) => f.kind !== "dir" && f.path.toLowerCase().endsWith(".tex"),
+    ).length;
+    const fastPath = texFiles === 1 && hasDocumentclass(tex);
+
+    if (fastPath) {
+      void session
+        .putText(path, tex)
+        .then((ack) => {
+          lastVersion = ack.version;
+        })
+        .catch((e) => {
+          // A session-expiry here surfaces again on the convert frame
+          // (status_code 4 → onWsMessage reopens + reconverts); anything
+          // else is a best-effort-persist miss, not a render blocker.
+          if (!(e instanceof SessionExpiredError)) {
+            console.warn("background save failed", e);
           }
-        } else {
-          console.error("PUT failed", e);
-          showToast(`Save failed: ${e}`, "error");
+        });
+      scheduleConvert(true, tex);
+      return;
+    }
+
+    try {
+      const ack = await session.putText(path, tex);
+      lastVersion = ack.version;
+      scheduleConvert(true);
+    } catch (e) {
+      if (e instanceof SessionExpiredError) {
+        statusEl().textContent = "session expired — reopening";
+        await session.reopen();
+        rebuildWsClient();
+        try {
+          const ack2 = await session.putText(path, tex);
+          lastVersion = ack2.version;
+          scheduleConvert(true);
+        } catch (e2) {
+          showToast(`Save failed after reconnect: ${e2}`, "error");
           statusEl().textContent = "save failed";
         }
+      } else {
+        console.error("PUT failed", e);
+        showToast(`Save failed: ${e}`, "error");
+        statusEl().textContent = "save failed";
       }
-    }, DEBOUNCE_MS);
+    }
+  };
+
+  editor.onChange((path, length) => {
+    const cc = charCountEl();
+    if (cc) cc.textContent = `${length.toLocaleString()} chars`;
+
+    const now = performance.now();
+    if (firstPendingEditAt === null) firstPendingEditAt = now;
+    if (timer !== null) window.clearTimeout(timer);
+
+    const fire = () => {
+      timer = null;
+      firstPendingEditAt = null;
+      void runConvertForEdit(path);
+    };
+    // Trailing debounce, but bounded: if edits have been landing steadily for
+    // CONVERT_MAX_WAIT_MS without a preview, fire now instead of rescheduling.
+    if (now - firstPendingEditAt >= CONVERT_MAX_WAIT_MS) {
+      fire();
+    } else {
+      timer = window.setTimeout(fire, DEBOUNCE_MS);
+    }
   });
 
   // -----------------------------------------------------------------

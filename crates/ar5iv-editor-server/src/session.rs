@@ -194,7 +194,7 @@ pub struct Session {
     /// response. Holds the path-rewritten string the browser receives
     /// (i.e., session-dir absolute paths already mapped to
     /// `/api/session/{id}/files/...`).
-    pub last_html:     Mutex<Option<String>>,
+    pub last_html:     Mutex<Option<Arc<str>>>,
     /// Path of the project's main `.tex` entrypoint, relative to
     /// `dir` and using forward slashes. The convert worker reads this
     /// instead of the WS request's `active_file`, so editing

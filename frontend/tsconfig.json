@@ -14,7 +14,7 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "esModuleInterop": true,
-    "allowImportingTsExtensions": false,
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "useDefineForClassFields": true,
     "noEmit": true,

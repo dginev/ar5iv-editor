@@ -139,6 +139,9 @@ async fn handle_socket(socket: WebSocket, state: AppState, session: Arc<Session>
                                 && resp.status != "superseded"
                                 && let Ok(mut slot) = session.last_html.lock()
                             {
+                                // `Arc<str>` clone: a refcount bump, not a copy
+                                // of the whole rendered document. The response
+                                // keeps its own handle to the same allocation.
                                 *slot = Some(resp.result.clone());
                             }
                             let _ = resp_tx.send(resp).await;

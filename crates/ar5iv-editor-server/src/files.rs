@@ -169,6 +169,16 @@ async fn create_session(
         })
         .await?;
 
+    // Pre-warm the session's engine child so the user's first edit converts
+    // against a warm process (~50-400 ms) instead of paying the cold spawn +
+    // `initialize` handshake (~1-10 s). Fire-and-forget: the response returns
+    // now and the spawn overlaps with the client hydrating the editor.
+    {
+        let converter = state.converter.clone();
+        let dir = session.dir.clone();
+        tokio::spawn(async move { converter.prewarm(&dir).await });
+    }
+
     let listing = scan_files(&session.dir).await?;
     let entry = entry_file_for(&session, &state).unwrap_or_else(|| "main.tex".to_string());
 
@@ -590,11 +600,13 @@ async fn export_zip(
     // URLs in the fragment are rewritten to plain `<rel>` so the
     // extracted ZIP renders standalone (extract → open `index.html`).
     let session_id = session.id.to_string();
+    // Cold export path: materialise the cached Arc<str> into an owned String
+    // for the zip builder (the hot convert path keeps the cheap Arc).
     let html_fragment = session
         .last_html
         .lock()
         .ok()
-        .and_then(|g| g.clone());
+        .and_then(|g| g.as_deref().map(str::to_string));
     let extras = build_export_extras(html_fragment, &session_id);
 
     // Build the ZIP into a buffer on the blocking pool. Session quotas

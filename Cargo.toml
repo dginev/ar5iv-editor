@@ -20,7 +20,11 @@ tower-http = { version = "0.6", features = ["fs", "set-header", "trace", "decomp
 
 askama = "0.14"
 
-serde = { version = "1", features = ["derive"] }
+# `rc` enables Serialize/Deserialize for Arc<T> — used by
+# ConvertResponse.result: Arc<str>, so the convert hot path shares the rendered
+# HTML with the export-zip cache (Session::last_html) via a refcount bump
+# instead of cloning the whole document on every conversion.
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 
 tracing = "0.1"

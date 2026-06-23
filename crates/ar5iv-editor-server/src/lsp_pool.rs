@@ -34,6 +34,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
@@ -122,14 +123,34 @@ impl std::fmt::Display for LspError {
 impl std::error::Error for LspError {}
 
 /// The fields of a `latexml/convert` result the bridge consumes.
-#[derive(Debug)]
+/// Deserialized directly from the JSON-RPC `result` subtree (see
+/// [`LspPool::convert`]) — no intermediate `Value` clone. `#[serde(default)]`
+/// makes every field optional; a missing/null/malformed result decodes via
+/// [`LspOutput::default`] to `status_code = 3` (engine error), matching the
+/// pre-typed `get_str`/`unwrap_or(3)` behaviour.
+#[derive(Debug, Deserialize)]
+#[serde(default)]
 pub struct LspOutput {
     pub html: String,
     pub log: String,
     pub status: String,
+    #[serde(rename = "statusCode")]
     pub status_code: i64,
     pub sources: Vec<String>,
     pub root: Option<String>,
+}
+
+impl Default for LspOutput {
+    fn default() -> Self {
+        Self {
+            html: String::new(),
+            log: String::new(),
+            status: String::new(),
+            status_code: 3,
+            sources: Vec::new(),
+            root: None,
+        }
+    }
 }
 
 // ======================================================================
@@ -298,7 +319,7 @@ impl LspPool {
 
         // Engine timeout + grace for fork/serialize/transport overhead.
         let deadline = Duration::from_secs(self.cfg.timeout_secs + 15);
-        let resp = match tokio::time::timeout(deadline, rx).await {
+        let mut resp = match tokio::time::timeout(deadline, rx).await {
             Ok(Ok(v)) => v,
             Ok(Err(_)) => {
                 // Sender dropped: the read task saw EOF (child died).
@@ -324,30 +345,27 @@ impl LspPool {
                     .to_string(),
             ));
         }
-        let r = resp.get("result").cloned().unwrap_or(Value::Null);
-        let get_str = |k: &str| {
-            r.get(k)
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .unwrap_or_default()
-        };
-        Ok(LspOutput {
-            html: get_str("html"),
-            log: get_str("log"),
-            status: get_str("status"),
-            status_code: r.get("statusCode").and_then(Value::as_i64).unwrap_or(3),
-            sources: r
-                .get("sources")
-                .and_then(Value::as_array)
-                .map(|a| {
-                    a.iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_string)
-                        .collect()
-                })
-                .unwrap_or_default(),
-            root: r.get("root").and_then(Value::as_str).map(str::to_string),
-        })
+        // Move the `result` subtree out of the response and decode it straight
+        // into the typed struct: no deep `.cloned()` of the (HTML-bearing)
+        // result and no per-field re-allocation. `take()` swaps in `Null`,
+        // which — like a missing/malformed result — decodes via
+        // `LspOutput::default()` (status_code = 3), preserving prior behaviour.
+        let result = resp
+            .get_mut("result")
+            .map(Value::take)
+            .unwrap_or(Value::Null);
+        Ok(serde_json::from_value::<LspOutput>(result).unwrap_or_default())
+    }
+
+    /// Spawn (or reuse) the session's warm child *without* converting, so the
+    /// first real convert skips the cold spawn + `initialize` handshake. Meant
+    /// to be called fire-and-forget at session creation; errors are swallowed
+    /// (the convert path retries and self-heals).
+    pub async fn prewarm(&self, session_dir: &Path) {
+        match self.child_for(session_dir).await {
+            Ok(_) => debug!("prewarmed LSP child for {}", session_dir.display()),
+            Err(e) => debug!("prewarm for {} failed: {e}", session_dir.display()),
+        }
     }
 
     /// Fetch the session's live child, or spawn one (evicting as needed).

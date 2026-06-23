@@ -5,6 +5,8 @@
 //! corresponding response so the client can correlate (and discard) results.
 //! See `docs/FileUI.md` for the full design.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 /// Build-time information about the latexml-oxide path-dep that's
@@ -42,11 +44,22 @@ pub struct LatexmlOxideVersion {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConvertRequest {
     pub id: u64,
-    /// The file to convert, relative to the session directory. The
-    /// engine reads this from disk; the client is responsible for
-    /// having PUT the active buffer to that path before sending the
-    /// convert frame.
+    /// The file to convert, relative to the session directory. When
+    /// `source` is absent the engine reads this from disk and the client
+    /// is responsible for having PUT the active buffer to that path
+    /// before sending the convert frame.
     pub active_file: String,
+    /// The active file's full text, carried inline so the conversion can
+    /// run without first waiting on a separate HTTP PUT round-trip. When
+    /// present, the warm-pool lane converts this directly instead of
+    /// reading `active_file` from disk. The client sends it only for the
+    /// single-`.tex` document fast path — where `active_file` is provably
+    /// the project's main entry, so the inline text *is* what the engine
+    /// would render. Multi-file / fragment edits still PUT-then-convert
+    /// so the engine resolves the whole project (and `\jobname`) off disk.
+    /// Absent → read from disk (unchanged behaviour).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     /// The session's `version` counter at the moment of the convert
     /// request. The server echoes it back; the client uses it to
     /// discard responses that race a still-pending write. Optional on
@@ -78,7 +91,12 @@ pub struct Timings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConvertResponse {
     pub id: u64,
-    pub result: String,
+    /// Rendered HTML fragment. `Arc<str>` (not `String`) so the WS handler
+    /// can stash a copy in `Session::last_html` for the export-zip route
+    /// with a refcount bump instead of cloning the whole document on every
+    /// conversion. Serializes/deserializes as a plain JSON string (serde
+    /// `rc` feature).
+    pub result: Arc<str>,
     pub status: String,
     pub status_code: i32,
     /// Echo of the request's `version`. Always present; defaults to 0
@@ -139,7 +157,7 @@ impl ConvertResponse {
         let msg = message.into();
         Self {
             id,
-            result: String::new(),
+            result: Arc::from(""),
             status: msg.clone(),
             status_code: 3,
             version: 0,
@@ -156,7 +174,7 @@ impl ConvertResponse {
     pub fn session_expired(id: u64) -> Self {
         Self {
             id,
-            result: String::new(),
+            result: Arc::from(""),
             status: "session_expired".into(),
             status_code: 4,
             version: 0,

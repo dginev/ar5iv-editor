@@ -86,9 +86,12 @@ export interface EditorHandle {
    *  its source). The caller switches to the correct buffer first; this acts on
    *  whatever buffer is active. Out-of-range line/col are clamped to the doc. */
   revealPosition(line: number, col: number): void;
-  /** Subscribe to live edits on the active buffer. The callback
-   *  receives the path and the new source on every doc change. */
-  onChange(cb: (path: string, source: string) => void): void;
+  /** Subscribe to live edits on the active buffer. The callback receives
+   *  the path and the new document *length* (chars) on every doc change.
+   *  Length is O(1) on CodeMirror's rope; the full text is fetched lazily
+   *  via `getSource()` only when actually needed (at the debounce tail),
+   *  so steady typing in a large document doesn't serialize it per key. */
+  onChange(cb: (path: string, length: number) => void): void;
   /** Switch the editor (and every cached buffer) to the given theme. */
   setTheme(theme: EditorTheme): void;
   /** Replace the lint markers on the active buffer. Pass `[]` to
@@ -145,7 +148,7 @@ const navFlashTheme = EditorView.theme({
 export function createEditor(host: HTMLElement, initialTheme: EditorTheme): EditorHandle {
   const buffers = new Map<string, Buffer>();
   let active: string | null = null;
-  let onChangeCb: ((path: string, source: string) => void) | null = null;
+  let onChangeCb: ((path: string, length: number) => void) | null = null;
   let currentTheme: EditorTheme = initialTheme;
 
   const themeCompartment = new Compartment();
@@ -233,7 +236,9 @@ export function createEditor(host: HTMLElement, initialTheme: EditorTheme): Edit
     EditorView.lineWrapping,
     EditorView.updateListener.of((u) => {
       if (u.docChanged && onChangeCb && active !== null) {
-        onChangeCb(active, u.state.doc.toString());
+        // Pass the doc length (O(1) on the rope), NOT doc.toString() — the
+        // latter copied the whole document on every keystroke.
+        onChangeCb(active, u.state.doc.length);
       }
     }),
   ];

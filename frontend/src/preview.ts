@@ -143,7 +143,13 @@ export function bindPreviewSourceNav(onPick: (t: SourceNavTarget) => void): void
   preview().bindSourceNav(onPick);
 }
 
+// Cached across renders: browser MathML support can't change within a session,
+// and the probe below forces a synchronous layout (reflow) — running it on
+// every morph was pure per-render cost.
+let mathMLSupport: boolean | null = null;
+
 function supportsMathML(): boolean {
+  if (mathMLSupport !== null) return mathMLSupport;
   // Heuristic: render a MathML node off-screen and inspect its layout.
   const probe = document.createElementNS("http://www.w3.org/1998/Math/MathML", "math");
   probe.innerHTML = "<mspace height=\"23px\" width=\"77px\"/>";
@@ -152,6 +158,7 @@ function supportsMathML(): boolean {
   document.body.appendChild(probe);
   const ok = probe.getBoundingClientRect().height > 5;
   probe.remove();
+  mathMLSupport = ok;
   return ok;
 }
 

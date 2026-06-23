@@ -5,6 +5,12 @@ export interface ConvertRequest {
   /** Session `version` counter at request time. Server echoes; client
    *  uses to discard responses that race a still-pending write. */
   version: number;
+  /** The active file's full text, carried inline so the conversion runs
+   *  without first awaiting a separate HTTP PUT round-trip. Sent only for
+   *  the single-`.tex` document fast path (where `active_file` is the main
+   *  entry). Omitted for multi-file / fragment edits, which PUT-then-convert
+   *  so the engine resolves the project from disk. */
+  source?: string;
   preamble?: string;
   profile?: string;
   format?: string;

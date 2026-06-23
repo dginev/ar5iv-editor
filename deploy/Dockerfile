@@ -113,22 +113,39 @@ WORKDIR /build/ar5iv-editor
 # `target/` cache is per-crate-version, the registry cache holds
 # already-downloaded crate sources.
 # Two binaries come out of this stage:
-#  * ar5iv-editor        — the web server (path-deps on latexml-oxide)
+#  * ar5iv-editor        — the web server (path-deps on latexml-oxide).
+#    Built with ar5iv-editor's own `[profile.release]`, which is already
+#    the maxperf-cortex recipe (opt-level=3, fat LTO, codegen-units=1,
+#    panic=unwind). Cargo profiles are workspace-local, so this binary
+#    cannot literally name latexml-oxide's `maxperf-cortex` — but it
+#    doesn't need to: the path-dep'd engine crates get fat-LTO'd into
+#    the server here regardless.
 #  * latexml_oxide       — the ENGINE the warm LSP pool spawns per
-#    session (`lsp_pool.rs`). Without it in the runtime image the pool
+#    session (`lsp_pool.rs`); this standalone binary does the ACTUAL
+#    production conversions. Without it in the runtime image the pool
 #    is DISABLED at startup (loud warn) and every conversion runs cold
 #    in-process — the exact silent-degradation failure the pool's
 #    design forbids. The cache mount over latexml-oxide/target also
 #    shadows any host-leaked target/ from the COPY above.
+#
+#    Build it with latexml-oxide's `maxperf-cortex` profile, NOT the
+#    default `release`: latexml-oxide's `[profile.release]` is its local
+#    benchmark profile (thin LTO, codegen-units=20) — fast to compile but
+#    leaves runtime perf on the table for the long-lived engine. maxperf-
+#    cortex = maxperf's real levers (fat LTO + codegen-units=1) with
+#    panic=unwind preserved, which the engine needs to isolate per-paper
+#    panics (catch_unwind). This is the binary on the hot path, so this is
+#    where whole-program optimization actually pays off. Costs a few extra
+#    minutes of fat-LTO link time on a cold build; runtime-only artifact.
 RUN --mount=type=cache,target=/build/ar5iv-editor/target,sharing=locked,id=ar5iv-editor-target \
     --mount=type=cache,target=/build/latexml-oxide/target,sharing=locked,id=latexml-oxide-target-release \
     --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked,id=cargo-registry \
     if [ "$CARGO_JOBS" != 0 ]; then export CARGO_BUILD_JOBS="$CARGO_JOBS"; fi && \
     cargo build --release -p ar5iv-editor-server && \
     cp target/release/ar5iv-editor /tmp/ar5iv-editor && \
-    cargo build --release --bin latexml_oxide \
+    cargo build --profile maxperf-cortex --bin latexml_oxide \
         --manifest-path /build/latexml-oxide/Cargo.toml && \
-    cp /build/latexml-oxide/target/release/latexml_oxide /tmp/latexml_oxide
+    cp /build/latexml-oxide/target/maxperf-cortex/latexml_oxide /tmp/latexml_oxide
 
 # --------------------------------------------------------------------
 # Stage: generate the latexml_oxide kernel dumps (`plain.YYYY.dump.txt` +

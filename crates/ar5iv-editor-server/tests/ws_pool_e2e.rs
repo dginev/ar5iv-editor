@@ -145,6 +145,7 @@ async fn document_profile_rides_the_warm_pool_over_ws() {
             // own --server default. MUST ride the pool; rejecting it was
             // the live routing bug.
             preload: vec!["ar5iv.sty".into()],
+            source: None,
         };
         serde_json::to_string(&req).unwrap()
     };

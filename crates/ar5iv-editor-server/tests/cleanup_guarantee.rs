@@ -273,6 +273,7 @@ async fn converter_confines_writes_to_the_session_dir() {
         profile:     Some("document".into()),
         format:      Some("html5".into()),
         preload:     vec!["graphicx.sty".into()],
+        source:      None,
     };
     let resp = converter.convert(req, session.clone()).await;
     assert!(

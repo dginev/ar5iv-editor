@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::mpsc as std_mpsc;
 use std::time::Instant;
 
@@ -93,6 +94,18 @@ impl Converter {
         }
     }
 
+    /// Pre-warm the session's engine child so the first interactive convert
+    /// hits a warm process instead of paying the cold spawn + `initialize`
+    /// handshake (~1-10 s of preamble/format loading). Fire-and-forget from
+    /// session creation: a failure here is harmless — the first real convert
+    /// just spawns the child itself and self-heals as usual. No-op when there
+    /// is no warm pool (engine binary absent at startup).
+    pub async fn prewarm(&self, session_dir: &std::path::Path) {
+        if let Some(pool) = &self.pool {
+            pool.prewarm(session_dir).await;
+        }
+    }
+
     /// Try the warm-pool lane. `None` means "not this lane" (wrong profile,
     /// engine error, …) and the caller falls back to the in-process worker;
     /// `Some` is a final answer (including session-expired).
@@ -115,12 +128,30 @@ impl Converter {
             return None;
         }
         let abs_path = session.resolve(&req.active_file).ok()?;
-        let tex = match tokio::fs::read_to_string(&abs_path).await {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !session.dir.exists() => {
-                return Some(ConvertResponse::session_expired(id));
+        // Inline-source fast path: when the client carried the active
+        // buffer on the convert frame (`source`), convert it directly and
+        // skip BOTH the disk read here AND the separate HTTP PUT round-trip
+        // the client would otherwise have to await first. The client only
+        // sends `source` for the single-`.tex` document case, where
+        // `active_file` is provably the main entry — so the inline text is
+        // exactly what the engine would have read from disk. Falls back to
+        // the disk read (unchanged) when `source` is absent.
+        let tex = match req.source.as_deref() {
+            Some(src) => {
+                // Still answer session-expired cheaply (the read below was
+                // the prior signal for a GC'd session dir).
+                if !session.dir.exists() {
+                    return Some(ConvertResponse::session_expired(id));
+                }
+                src.to_string()
             }
-            Err(_) => return None, // worker lane reports the read error
+            None => match tokio::fs::read_to_string(&abs_path).await {
+                Ok(s) => s,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound && !session.dir.exists() => {
+                    return Some(ConvertResponse::session_expired(id));
+                }
+                Err(_) => return None, // worker lane reports the read error
+            },
         };
         // Same promotion rule as `convert_one`: a file with its own
         // `\documentclass` is a full document — exactly what the LSP
@@ -174,7 +205,7 @@ impl Converter {
         );
         Some(ConvertResponse {
             id,
-            result: html,
+            result: html.into(),
             status,
             status_code: out.status_code as i32,
             version: req.version,
@@ -236,7 +267,7 @@ fn worker_main(rx: std_mpsc::Receiver<Job>) {
                     if Some(i) != last_convert {
                         let _ = reply.send(ConvertResponse {
                             id:          req.id,
-                            result:      String::new(),
+                            result:      Arc::from(""),
                             status:      "superseded".into(),
                             status_code: 0,
                             version:     req.version,
@@ -391,7 +422,7 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
             let diagnostics = parse_diagnostics(&resp.log);
             return ConvertResponse {
                 id,
-                result: String::new(),
+                result: Arc::from(""),
                 status: resp.status,
                 status_code: resp.status_code as i32,
                 version,
@@ -479,7 +510,7 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
 
     ConvertResponse {
         id,
-        result: html,
+        result: html.into(),
         status: resp.status,
         status_code: resp.status_code as i32,
         version,
@@ -572,7 +603,7 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
 
     let no_render = |resp: &latexml::converter::ConversionResponse| ConvertResponse {
         id:          0,
-        result:      String::new(),
+        result:      Arc::from(""),
         status:      resp.status.clone(),
         status_code: resp.status_code as i32,
         version:     0,
@@ -861,6 +892,12 @@ fn has_unescaped_percent(s: &str) -> bool {
 ///
 /// Only `src` and `href` get rewritten — other attributes might
 /// legitimately carry strings that look like paths but aren't.
+/// Matches `src="..."` / `href="..."` attributes. Compiled once: this runs on
+/// the rendered HTML of every conversion, and `Regex::new` is far costlier than
+/// a match — keep it off the per-keystroke hot path.
+static ATTR_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r#"\s(src|href)="([^"]*)""#).unwrap());
+
 fn rewrite_session_paths(html: &str, session_dir: &std::path::Path, session_id: &str) -> String {
     let prefix = match session_dir.to_str() {
         Some(s) => s,
@@ -868,12 +905,8 @@ fn rewrite_session_paths(html: &str, session_dir: &std::path::Path, session_id: 
     };
 
     let prefix_url = format!("/api/session/{session_id}/files/");
-    let attr_re = regex::Regex::new(
-        r#"\s(src|href)="([^"]*)""#,
-    )
-    .unwrap();
 
-    attr_re
+    ATTR_RE
         .replace_all(html, |caps: &regex::Captures| {
             let attr = &caps[1];
             let val = &caps[2];
@@ -999,6 +1032,7 @@ Warn:Recovery:something Patched up after the error\n\
                     profile: Some("fragment".into()),
                     format: Some("html5".into()),
                     preload: vec![],
+                    source: None,
                 },
                 session,
             )
@@ -1102,6 +1136,7 @@ Warn:Recovery:something Patched up after the error\n\
                     profile: Some("fragment".into()),
                     format: Some("html5".into()),
                     preload: vec![],
+                    source: None,
                 },
                 session,
             )
@@ -1177,6 +1212,7 @@ Warn:Recovery:something Patched up after the error\n\
                         profile: Some("fragment".into()),
                         format: Some("html5".into()),
                         preload: preload.clone(),
+                        source: None,
                     },
                     session.clone(),
                 )

@@ -117,6 +117,7 @@ async fn includegraphics_resolves_and_path_is_rewritten() {
         profile:     Some("fragment".into()),
         format:      Some("html5".into()),
         preload:     vec!["graphicx.sty".into()],
+        source:      None,
     };
     ws.send(Message::Text(serde_json::to_string(&req).unwrap()))
         .await
