@@ -2,7 +2,6 @@
   "examples": [
     { "name": "Equations", "slug": "equations", "entry": "main.tex" },
     { "name": "Tables", "slug": "tables", "entry": "main.tex" },
-    { "name": "Narrative", "slug": "narrative", "entry": "main.tex" },
     { "name": "Babel", "slug": "babel", "entry": "main.tex", "disabled": true },
     { "name": "Unicode", "slug": "unicode", "entry": "main.tex" },
     { "name": "Color", "slug": "color", "entry": "main.tex" },
