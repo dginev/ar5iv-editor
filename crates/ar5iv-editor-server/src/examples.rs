@@ -10,6 +10,14 @@ use crate::error::AppError;
 
 static EXAMPLES_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../examples");
 
+/// Anchors the build-time digest of the embedded `examples/` tree (computed
+/// in build.rs) into this crate's compile inputs. `include_dir!` re-reads the
+/// tree only when the crate recompiles, and its own change-tracking is a
+/// no-op without the `nightly` feature — so without this `env!` a changed
+/// example would silently re-embed stale content. A changed digest forces the
+/// recompile (and thus a fresh embed). See build.rs for the full rationale.
+const _EXAMPLES_DIGEST: &str = env!("AR5IV_EXAMPLES_DIGEST");
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExampleManifestEntry {
     pub name: String,
