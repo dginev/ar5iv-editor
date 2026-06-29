@@ -635,7 +635,7 @@ fn is_allowed_extension(rel: &Path) -> bool {
     matches!(
         rel.extension().and_then(|e| e.to_str()),
         Some(
-            "tex" | "sty" | "cls" | "clo" | "bib" | "bst" | "bbl"
+            "tex" | "sty" | "cls" | "clo" | "bib" | "bst" | "bbl" | "rhai"
             | "png" | "jpg" | "jpeg" | "gif" | "svg" | "pdf" | "eps"
             | "csv" | "dat" | "txt" | "md" | "toml" | "json" | "yaml" | "yml"
         )

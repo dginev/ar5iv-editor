@@ -24,7 +24,7 @@ const CONVERT_MAX_WAIT_MS = 1500;
 type ChromeTheme = "light" | "dark";
 
 const TEXT_EXTENSIONS = new Set([
-  "tex", "sty", "cls", "bib", "bst", "bbl", "def", "ldf",
+  "tex", "sty", "cls", "bib", "bst", "bbl", "def", "ldf", "rhai",
   "txt", "md", "csv", "toml", "json", "yaml", "yml", "svg",
 ]);
 

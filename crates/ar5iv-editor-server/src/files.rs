@@ -1036,7 +1036,7 @@ async fn scan_files(root: &std::path::Path) -> Result<Vec<FileMeta>, AppError> {
 fn file_kind_for(path: &str) -> FileKind {
     if matches!(
         std::path::Path::new(path).extension().and_then(|e| e.to_str()),
-        Some("tex" | "sty" | "cls" | "bib" | "bst" | "bbl" | "def" | "ldf"
+        Some("tex" | "sty" | "cls" | "bib" | "bst" | "bbl" | "def" | "ldf" | "rhai"
              | "txt" | "md" | "csv"
              | "dat" | "toml" | "json" | "yaml" | "yml" | "svg")
     ) {
@@ -1049,7 +1049,7 @@ fn file_kind_for(path: &str) -> FileKind {
 fn is_allowed_extension(path: &str) -> bool {
     matches!(
         std::path::Path::new(path).extension().and_then(|e| e.to_str()),
-        Some("tex" | "sty" | "cls" | "clo" | "bib" | "bst" | "bbl" | "def" | "ldf"
+        Some("tex" | "sty" | "cls" | "clo" | "bib" | "bst" | "bbl" | "def" | "ldf" | "rhai"
              | "png" | "jpg" | "jpeg" | "gif" | "svg" | "pdf" | "eps"
              | "csv" | "dat" | "txt" | "md" | "toml" | "json" | "yaml" | "yml")
     )
@@ -1073,7 +1073,7 @@ fn sniff_content_type(path: &std::path::Path) -> &'static str {
         Some("pdf") => "application/pdf",
         Some("json") => "application/json",
         Some("tex" | "sty" | "cls" | "bib" | "bst" | "txt" | "md" | "csv" | "dat"
-             | "toml" | "yaml" | "yml") => "text/plain; charset=utf-8",
+             | "toml" | "yaml" | "yml" | "rhai") => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
     }
 }
@@ -1178,5 +1178,19 @@ mod tests {
         assert!(out.contains("just a fragment"));
         assert!(out.contains("css/ar5iv.css"), "css linked in fallback shell");
         assert!(out.contains("<head>"), "fallback adds a head");
+    }
+
+    #[test]
+    fn rhai_bindings_are_editable_text() {
+        // `.rhai` package bindings (e.g. the Rhai Bindings showcase) carry a
+        // custom syntax but are plain text — they must open in the editor,
+        // upload like any source file, and serve as text rather than a binary
+        // download.
+        assert!(matches!(file_kind_for("example.sty.rhai"), FileKind::Text));
+        assert!(is_allowed_extension("example.sty.rhai"));
+        assert_eq!(
+            sniff_content_type(std::path::Path::new("example.sty.rhai")),
+            "text/plain; charset=utf-8"
+        );
     }
 }

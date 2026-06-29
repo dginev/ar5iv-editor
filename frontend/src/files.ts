@@ -626,7 +626,7 @@ function makeTextButton(label: string, title: string): HTMLButtonElement {
 function isEditableExtension(path: string): boolean {
   const ext = path.includes(".") ? path.slice(path.lastIndexOf(".") + 1).toLowerCase() : "";
   return [
-    "tex", "sty", "cls", "bib", "bst", "bbl", "def", "ldf",
+    "tex", "sty", "cls", "bib", "bst", "bbl", "def", "ldf", "rhai",
     "txt", "md", "csv", "toml", "json", "yaml", "yml", "svg",
   ].includes(ext);
 }
