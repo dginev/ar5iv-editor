@@ -5,6 +5,7 @@
     { "name": "Babel", "slug": "babel", "entry": "main.tex", "disabled": true },
     { "name": "Unicode", "slug": "unicode", "entry": "main.tex" },
     { "name": "Color", "slug": "color", "entry": "main.tex" },
+    { "name": "Rhai Bindings", "slug": "rhai-bindings", "entry": "main.tex" },
     { "name": "PSTricks Graphics", "slug": "pstricks-graphics", "entry": "main.tex", "disabled": true },
     { "name": "Wiki Syntax", "slug": "wiki-syntax", "entry": "main.tex", "disabled": true },
     { "name": "Boxes", "slug": "boxes", "entry": "main.tex" },
