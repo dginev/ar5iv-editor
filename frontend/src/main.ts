@@ -192,6 +192,20 @@ function pickInitialActivePath(env: SessionEnvelope): string | null {
   return env.files.find((f) => f.kind === "text")?.path ?? null;
 }
 
+/** The project's main `.tex` — the document the engine actually renders.
+ *  Prefers the server's `entry` pick (its `find_main_tex` heuristic), then a
+ *  sole `.tex`, then the first `.tex` in the listing; `null` when the project
+ *  has no `.tex` at all. Used to re-render the document when the user edits an
+ *  auxiliary file (a `.sty`/`.cls`/`.bib`/`.rhai`) the engine consumes during
+ *  conversion but cannot parse on its own. */
+function findMainTexPath(env: SessionEnvelope): string | null {
+  const isTex = (p: string) => p.toLowerCase().endsWith(".tex");
+  if (env.entry && isTex(env.entry) && env.files.some((f) => f.path === env.entry)) {
+    return env.entry;
+  }
+  return env.files.find((f) => f.kind !== "dir" && isTex(f.path))?.path ?? null;
+}
+
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -739,17 +753,32 @@ async function main(): Promise<void> {
    *    - active path was deleted out from under us and no
    *      replacement has been picked yet (would otherwise surface as
    *      "active_file: No such file or directory" server-side) */
-  const scheduleConvert = (scrollToCursor = false, source?: string): number | null => {
-    if (!client || !activePath) {
+  const scheduleConvert = (
+    scrollToCursor = false,
+    source?: string,
+    target?: { path: string; source: string },
+  ): number | null => {
+    if (!client) {
       maybeShowEmptyState();
       return null;
     }
-    if (!activePath.toLowerCase().endsWith(".tex")) {
+    // The file to render. Normally the active buffer (when it's a `.tex`).
+    // When `target` is supplied — an auxiliary-file edit re-rendering the
+    // project's main `.tex` — render that instead. `target.source` is the
+    // main `.tex`'s bytes (for the preamble/preload shaping below); it is
+    // never inlined on the wire, so the engine disk-reads the document and
+    // the just-saved auxiliary file along with it.
+    const renderPath = target?.path ?? activePath;
+    if (!renderPath) {
       maybeShowEmptyState();
       return null;
     }
-    if (!session.envelope.files.some((f) => f.path === activePath)) {
-      activePath = null;
+    if (!target && !renderPath.toLowerCase().endsWith(".tex")) {
+      maybeShowEmptyState();
+      return null;
+    }
+    if (!session.envelope.files.some((f) => f.path === renderPath)) {
+      if (!target) activePath = null;
       maybeShowEmptyState();
       return null;
     }
@@ -760,16 +789,18 @@ async function main(): Promise<void> {
     // just-edited line.
     if (scrollToCursor) {
       const pos = editor.getCursorPos();
-      requestScroll.set(id, { line: pos.line, col: pos.col, token: pos.token, file: activePath });
+      requestScroll.set(id, { line: pos.line, col: pos.col, token: pos.token, file: renderPath });
     }
-    const tex = source ?? editor.getSource();
+    const tex = target?.source ?? source ?? editor.getSource();
     const { preamble } = splitPreamble(tex);
     client.send({
       id,
-      active_file: activePath,
+      active_file: renderPath,
       version: lastVersion,
       // Inline source rides the frame only on the fast path (caller passes
       // it); the server then converts it directly, skipping the disk read.
+      // A `target` render never inlines (the caller leaves `source`
+      // undefined) so the edited auxiliary file is re-read from disk.
       source,
       preamble: preamble ?? undefined,
       profile: "fragment",
@@ -797,6 +828,58 @@ async function main(): Promise<void> {
    *  convert, as before. */
   const runConvertForEdit = async (path: string): Promise<void> => {
     const tex = editor.getSource();
+
+    // Auxiliary-file edit (a `.sty`/`.cls`/`.bib`/`.rhai` …): the engine
+    // consumes it during a document conversion but can't parse it standalone,
+    // so we don't render it directly. Persist it, then re-render the project's
+    // main `.tex` — the convert disk-reads the just-saved file, so e.g. an
+    // edited runtime `.rhai` binding takes effect live instead of silently
+    // doing nothing.
+    if (!path.toLowerCase().endsWith(".tex")) {
+      try {
+        const ack = await session.putText(path, tex);
+        lastVersion = ack.version;
+      } catch (e) {
+        if (e instanceof SessionExpiredError) {
+          statusEl().textContent = "session expired — reopening";
+          await session.reopen();
+          rebuildWsClient();
+          try {
+            const ack2 = await session.putText(path, tex);
+            lastVersion = ack2.version;
+          } catch (e2) {
+            showToast(`Save failed after reconnect: ${e2}`, "error");
+            statusEl().textContent = "save failed";
+            return;
+          }
+        } else {
+          console.error("PUT failed", e);
+          showToast(`Save failed: ${e}`, "error");
+          statusEl().textContent = "save failed";
+          return;
+        }
+      }
+      const mainTex = findMainTexPath(session.envelope);
+      if (!mainTex) {
+        maybeShowEmptyState();
+        return;
+      }
+      let mainSource: string;
+      try {
+        mainSource = await session.getText(mainTex);
+      } catch (e) {
+        // Best-effort: without the main `.tex` bytes we can't shape the
+        // convert frame. The file was still saved; a later `.tex` edit will
+        // pick it up. (Session-expiry already handled by the PUT above.)
+        console.warn("aux-edit reconvert: could not read main .tex", e);
+        return;
+      }
+      // No scroll-to-cursor: the caret sits in the auxiliary file, which has
+      // no position in the rendered document.
+      scheduleConvert(false, undefined, { path: mainTex, source: mainSource });
+      return;
+    }
+
     const texFiles = session.envelope.files.filter(
       (f) => f.kind !== "dir" && f.path.toLowerCase().endsWith(".tex"),
     ).length;
