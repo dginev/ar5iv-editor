@@ -86,6 +86,7 @@ fn convert_with_search_paths(
                 include_comments: Some(false),
                 nomathparse: None,
                 source_map: None,
+                inputencoding: None,
             };
             let converter = OxideConverter::from_config(opts);
             let resp = converter.convert(format!("literal:{tex}"));
@@ -114,6 +115,7 @@ fn convert_with_search_paths(
                     split_naming: None,
                     xslt_parameters: &[],
                     graphics_svg_threshold_kb: 0,
+                    site_directory: None,
                     whatsout: latexml_post::extract::Whatsout::Document,
                 };
                 run_post_processing(&xml, &post_opts)

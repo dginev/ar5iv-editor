@@ -388,6 +388,8 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         // attributes this stamps. The tag→file decoder is read back from the
         // engine below (out-of-band, never inlined into the HTML).
         source_map: Some(true),
+        // Editor never overrides input decoding — default (UTF-8) applies.
+        inputencoding: None,
     };
 
     let t_total = Instant::now();
@@ -482,6 +484,8 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         xslt_parameters: &[],
         graphics_svg_threshold_kb: 0,
         schemadocs: false,
+        // No split-site output in the editor preview.
+        site_directory: None,
         whatsout: latexml_post::extract::Whatsout::Document,
     };
     let t2 = Instant::now();
@@ -597,6 +601,7 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
         // No source map: this is a downloadable bundle, not the live
         // editor preview — the `data-sourcepos` cruft isn't wanted.
         source_map: None,
+        inputencoding: None,
     };
     let converter = OxideConverter::from_config(opts);
     let resp = converter.convert(abs_path.to_string_lossy().into_owned());
@@ -648,6 +653,7 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
         xslt_parameters: &[],
         graphics_svg_threshold_kb: 0,
         schemadocs: false,
+        site_directory: None,
         whatsout: latexml_post::extract::Whatsout::Archive,
     };
     let html = run_post_processing(&xml, &post_opts);
