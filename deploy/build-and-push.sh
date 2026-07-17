@@ -244,10 +244,15 @@ generator="$LATEXML_PATH/tools/generate-scholarly-schema-docs"
 schema_docs_root="$CTX/schema-docs"
 mkdir -p "$schema_docs_root"
 
+# The RelaxNG tree lives inside latexml_core, not at the latexml-oxide workspace
+# root: `cargo package` cannot follow a `../` path, so each embedded resource tree
+# had to move into the crate that embeds it for the crates.io release
+# (latexml-oxide docs/release/CRATES_IO_PUBLISH.md B3b). The catalog itself stayed
+# at resources/ and points across.
 PATH="$schema_doc_path" "$generator" \
-    --schema  "$LATEXML_PATH/resources/RelaxNG/LaTeXML.rnc"  \
-    --catalog "$LATEXML_PATH/resources/LaTeXML.catalog"      \
-    --output  "$schema_docs_root/latexml"                    \
+    --schema  "$LATEXML_PATH/latexml_core/resources/RelaxNG/LaTeXML.rnc" \
+    --catalog "$LATEXML_PATH/resources/LaTeXML.catalog"                  \
+    --output  "$schema_docs_root/latexml"                                \
     --title   "LaTeXML Document Schema"
 PATH="$schema_doc_path" "$generator" \
     --schema  "$VALIDATOR_PATH/schema/html5/scholarly-ltx.rnc" \
