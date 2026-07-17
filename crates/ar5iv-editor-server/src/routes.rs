@@ -233,14 +233,14 @@ pub async fn validate_page() -> Result<Response, AppError> {
 ///
 /// The displayed text carries the *build's* date + SHA (so you
 /// can tell exactly which commit the running binary was built
-/// from). The link target points at the repo's `tree/master` view
+/// from). The link target points at the repo's `tree/main` view
 /// — always-live, so clicking it shows what's current upstream
 /// rather than a snapshot tree that may already be stale by the
 /// time someone clicks.
 pub async fn version() -> Json<VersionInfo> {
     let repo = std::env::var("AR5IV_EDITOR_LATEXML_OXIDE_URL")
         .unwrap_or_else(|_| LATEXML_OXIDE_REPO_DEFAULT.to_string());
-    let url = format!("{repo}/tree/master");
+    let url = format!("{repo}/tree/main");
     Json(VersionInfo {
         latexml_oxide: LatexmlOxideVersion {
             sha: LATEXML_OXIDE_SHA.to_string(),
