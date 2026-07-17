@@ -84,6 +84,8 @@ fn convert_with_search_paths(
                 preload: Some(PRELOAD.iter().map(|s| s.to_string()).collect()),
                 search_paths: Some(search_paths),
                 include_comments: Some(false),
+                strict: None,
+                include_styles: None,
                 nomathparse: None,
                 source_map: None,
                 inputencoding: None,
@@ -115,6 +117,9 @@ fn convert_with_search_paths(
                     split_naming: None,
                     xslt_parameters: &[],
                     graphics_svg_threshold_kb: 0,
+                    graphicimages: true,
+                    icon: None,
+                    timestamp: None,
                     site_directory: None,
                     whatsout: latexml_post::extract::Whatsout::Document,
                 };

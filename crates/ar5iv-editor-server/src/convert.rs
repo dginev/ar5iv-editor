@@ -382,6 +382,11 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         // resolve to files the user has uploaded.
         search_paths: Some(vec![session.dir.to_string_lossy().into_owned()]),
         include_comments: Some(false),
+        // Non-strict, no raw-.sty loading: match the engine's own LSP config
+        // (latexml_oxide::lsp_server::document::make_config). ar5iv.sty, when
+        // preloaded, is what enables local raw-style handling — not this flag.
+        strict: None,
+        include_styles: None,
         nomathparse: None,
         // Always on for the editor: the whole point of this backend is the
         // live source↔preview sync, which rides the `data-sourcepos`
@@ -483,6 +488,13 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         split_naming: None,
         xslt_parameters: &[],
         graphics_svg_threshold_kb: 0,
+        // Graphics phase ON: this is what rasterizes the user's
+        // \includegraphics PDFs/EPS into servable PNGs via source_directory
+        // above; --nographicimages would skip it wholesale. No favicon or
+        // build timestamp in the preview/bundle output.
+        graphicimages: true,
+        icon: None,
+        timestamp: None,
         schemadocs: false,
         // No split-site output in the editor preview.
         site_directory: None,
@@ -597,6 +609,11 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
         preload: None,
         search_paths: Some(vec![session.dir.to_string_lossy().into_owned()]),
         include_comments: Some(false),
+        // Non-strict, no raw-.sty loading: match the engine's own LSP config
+        // (latexml_oxide::lsp_server::document::make_config). ar5iv.sty, when
+        // preloaded, is what enables local raw-style handling — not this flag.
+        strict: None,
+        include_styles: None,
         nomathparse: None,
         // No source map: this is a downloadable bundle, not the live
         // editor preview — the `data-sourcepos` cruft isn't wanted.
@@ -652,6 +669,13 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
         split_naming: None,
         xslt_parameters: &[],
         graphics_svg_threshold_kb: 0,
+        // Graphics phase ON: this is what rasterizes the user's
+        // \includegraphics PDFs/EPS into servable PNGs via source_directory
+        // above; --nographicimages would skip it wholesale. No favicon or
+        // build timestamp in the preview/bundle output.
+        graphicimages: true,
+        icon: None,
+        timestamp: None,
         schemadocs: false,
         site_directory: None,
         whatsout: latexml_post::extract::Whatsout::Archive,
