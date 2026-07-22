@@ -17,11 +17,13 @@ This document loads \texttt{example.sty}, which exists only as
 conversion time. There is no Perl \texttt{.ltxml} file and no recompilation:
 the binding is plain script, discovered on the search path.
 
-The binding does two things. It calls \texttt{RequirePackage("xcolor")} so
-that \verb|\color| becomes available, and it defines \verb|\foo| to expand to
-\verb|{\color{purple}FOO}|.
+It defines \verb|\foo| with a \texttt{DefConstructor} that builds the output
+node directly --- an \verb|<ltx:text>| carrying an inline \verb|color:purple|
+CSS style. The binding also shows the \texttt{DefMacro} alternative (commented
+out): instead of emitting XML, it expands \verb|\foo| to the real TeX source
+\verb|{\color{purple}FOO}|, which is why it calls \texttt{RequirePackage("xcolor")}.
 
-Here is that macro in action: \foo{}. And once more inside a sentence --- the
+Here is \verb|\foo| in action: \foo{}. And once more inside a sentence --- the
 word \foo{} should render in purple.
 
 \end{document}

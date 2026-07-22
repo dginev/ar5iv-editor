@@ -8,10 +8,15 @@
 // NOTE: TeX backslashes are doubled inside Rhai strings ("\\foo", not "\foo").
 
 // Pull in xcolor so `\color` is available — the Rhai twin of Perl's
-// `RequirePackage('xcolor')`.
+// `RequirePackage('xcolor')`. Needed by the DefMacro alternative below (the
+// active DefConstructor styles the node directly, so it doesn't need xcolor).
 RequirePackage("xcolor");
 
-// Define `\foo` to expand to purple "FOO". The returned string is real TeX
-// source, re-tokenized faithfully: `\color` resolves to xcolor's control
-// sequence, not to literal letters.
-DefMacro("\\foo", || "{\\color{purple}FOO}");
+// Define `\foo` to render as purple "FOO". Two equivalent styles:
+//   * DefConstructor (active) builds the XML output directly — an `<ltx:text>`
+//     carrying an inline CSS style — so there is no `\color`/xcolor round-trip.
+//   * DefMacro (commented) instead expands to real TeX source that is
+//     re-tokenized faithfully: `\color` resolves to xcolor's control sequence,
+//     not to literal letters.
+// DefMacro("\\foo", || "{\\color{purple}FOO}");
+DefConstructor("\\foo", "<ltx:text cssstyle='color:purple;'>FOO</ltx:text>")
