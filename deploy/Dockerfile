@@ -65,6 +65,14 @@ ARG VALIDATOR_SHA=unknown
 # threads; matters most because BuildKit runs the builder and formats
 # stages in parallel, so two uncapped cargo builds can thrash a host.
 ARG CARGO_JOBS=0
+# TEMPORARY: pin the build toolchain to a known-good nightly. Floating
+# `nightly` in (2026-07-27, 2026-08-04] has a fat-LTO memory-usage regression
+# that OOM-kills the ar5iv_editor + maxperf-cortex compiles (a single rustc
+# balloons to ~231 GB RSS). 2026-07-27 peaks at 5.3 GB. Overrides the floating
+# `nightly` in both repos' rust-toolchain.toml for THIS stage only (the debug
+# `formats` stage does no fat-LTO, so it stays on floating nightly). See
+# latexml-oxide#512 — revert to floating `nightly` once upstream fixes it.
+ARG RUST_NIGHTLY=nightly-2026-07-27
 
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
@@ -72,6 +80,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     RUST_MIN_STACK=16777216 \
     RUSTFLAGS="-C target-cpu=x86-64-v3" \
     CARGO_TERM_COLOR=always \
+    RUSTUP_TOOLCHAIN=$RUST_NIGHTLY \
     LATEXML_OXIDE_SHA=$LATEXML_OXIDE_SHA \
     LATEXML_OXIDE_DATE=$LATEXML_OXIDE_DATE \
     VALIDATOR_SHA=$VALIDATOR_SHA
@@ -83,7 +92,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         autoconf automake libtool make \
     && rm -rf /var/lib/apt/lists/* \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --no-modify-path --default-toolchain none --profile minimal
+        | sh -s -- -y --no-modify-path --default-toolchain none --profile minimal \
+    && rustup toolchain install "$RUST_NIGHTLY" --profile minimal
 
 COPY ar5iv-editor/rust-toolchain.toml /build/ar5iv-editor/rust-toolchain.toml
 COPY ar5iv-editor/Cargo.toml /build/ar5iv-editor/Cargo.toml
