@@ -395,6 +395,10 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         source_map: Some(true),
         // Editor never overrides input decoding — default (UTF-8) applies.
         inputencoding: None,
+        // Eager digest-all→build-all (the Perl-parity path). Editor docs are
+        // bounded and latency-sensitive; the streaming path trades peak RSS for
+        // interleave overhead, which we don't want on the live-preview lane.
+        streaming: None,
     };
 
     let t_total = Instant::now();
@@ -481,6 +485,10 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         css_files: &[],
         js_files: &[],
         noinvisibletimes: false,
+        // Perl defaults: map styled alphanumerics to Unicode Plane-1 (`plane1`
+        // on), without the `hackplane1` remap-only-poorly-supported variant.
+        plane1: true,
+        hackplane1: false,
         mathtex: false,
         navigationtoc: None,
         split: false,
@@ -619,6 +627,10 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
         // editor preview — the `data-sourcepos` cruft isn't wanted.
         source_map: None,
         inputencoding: None,
+        // Eager digest-all→build-all (the Perl-parity path). Editor docs are
+        // bounded and latency-sensitive; the streaming path trades peak RSS for
+        // interleave overhead, which we don't want on the live-preview lane.
+        streaming: None,
     };
     let converter = OxideConverter::from_config(opts);
     let resp = converter.convert(abs_path.to_string_lossy().into_owned());
@@ -662,6 +674,10 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
         css_files: &[],
         js_files: &[],
         noinvisibletimes: false,
+        // Perl defaults: map styled alphanumerics to Unicode Plane-1 (`plane1`
+        // on), without the `hackplane1` remap-only-poorly-supported variant.
+        plane1: true,
+        hackplane1: false,
         mathtex: false,
         navigationtoc: None,
         split: false,

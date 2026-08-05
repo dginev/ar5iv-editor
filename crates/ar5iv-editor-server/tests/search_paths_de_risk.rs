@@ -89,6 +89,7 @@ fn convert_with_search_paths(
                 nomathparse: None,
                 source_map: None,
                 inputencoding: None,
+                streaming: None,
             };
             let converter = OxideConverter::from_config(opts);
             let resp = converter.convert(format!("literal:{tex}"));
@@ -109,6 +110,8 @@ fn convert_with_search_paths(
                     css_files: &[],
                     js_files: &[],
                     noinvisibletimes: false,
+                    plane1: true,
+                    hackplane1: false,
                     mathtex: false,
                     navigationtoc: None,
                     schemadocs: false,
