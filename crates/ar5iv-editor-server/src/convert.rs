@@ -489,6 +489,10 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         // on), without the `hackplane1` remap-only-poorly-supported variant.
         plane1: true,
         hackplane1: false,
+        // Perl `--urlstyle=file` (default): cross-ref hrefs keep their
+        // literal `file.html` form (identity), not the server/negotiated
+        // rewrites that strip the extension or a trailing `index`.
+        url_style: latexml_post::crossref::UrlStyle::File,
         mathtex: false,
         navigationtoc: None,
         split: false,
@@ -678,6 +682,10 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
         // on), without the `hackplane1` remap-only-poorly-supported variant.
         plane1: true,
         hackplane1: false,
+        // Perl `--urlstyle=file` (default): cross-ref hrefs keep their
+        // literal `file.html` form (identity), not the server/negotiated
+        // rewrites that strip the extension or a trailing `index`.
+        url_style: latexml_post::crossref::UrlStyle::File,
         mathtex: false,
         navigationtoc: None,
         split: false,

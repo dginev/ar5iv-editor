@@ -112,6 +112,7 @@ fn convert_with_search_paths(
                     noinvisibletimes: false,
                     plane1: true,
                     hackplane1: false,
+                    url_style: latexml_post::crossref::UrlStyle::File,
                     mathtex: false,
                     navigationtoc: None,
                     schemadocs: false,

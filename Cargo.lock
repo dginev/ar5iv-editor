@@ -1206,8 +1206,9 @@ dependencies = [
 
 [[package]]
 name = "latexml"
-version = "0.7.5-rc5"
+version = "0.7.6"
 dependencies = [
+ "chrono",
  "clap",
  "flate2",
  "glob",
@@ -1237,7 +1238,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_codegen"
-version = "0.4.0"
+version = "0.4.2"
 dependencies = [
  "glob",
  "latexml_core",
@@ -1250,7 +1251,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_contrib"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "latexml_codegen",
  "latexml_core",
@@ -1265,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_core"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "flate2",
  "kpathsea",
@@ -1288,7 +1289,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_engine"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "flate2",
@@ -1304,7 +1305,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_math_parser"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "latexml_core",
  "libxml",
@@ -1316,7 +1317,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_package"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "base64 0.23.1",
  "latexml_codegen",
@@ -1330,7 +1331,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_post"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "flate2",
  "imagesize",
