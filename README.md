@@ -211,6 +211,18 @@ By default the server resolves `frontend/dist` relative to its working
 directory; the env var avoids surprises when the binary isn't started from
 the workspace root.
 
+### Updating the vendored ar5iv-css
+
+Preview/export styles are vendored as a **single self-contained file** at
+`frontend/public/css/ar5iv.css` (embedded into the server binary via
+`include_bytes!`). When bumping
+[ar5iv-css](https://github.com/dginev/ar5iv-css), copy its
+**`dist/ar5iv.min.css`** (the `lightningcss --bundle` output) into that path —
+*not* the source `css/ar5iv.css`. Since ar5iv-css 0.9.x the source file
+`@import`s partials from `css/ar5iv/` (tokens, a11y, dark-mode, print) that we
+don't serve as separate files, so they'd 404 and silently drop the whole
+dark-mode inversion layer. `ar5iv-fonts.css` is copied verbatim.
+
 ### Configuration (env)
 
 Listener and frontend:

@@ -57,7 +57,11 @@ const HOST_TOKEN_CSS = `
   }
 `;
 
-// ar5iv stylesheets, copied from `~/git/ar5iv-css/css` into our static dir.
+// ar5iv stylesheets, self-hosted in our static dir. `ar5iv.css` is the
+// self-contained bundle `~/git/ar5iv-css/dist/ar5iv.min.css` (lightningcss
+// --bundle) — NOT the source `css/ar5iv.css`, which since 0.9.x `@import`s
+// partials from `css/ar5iv/` that we don't serve (they'd 404 and drop dark
+// mode). `ar5iv-fonts.css` is copied verbatim.
 // Self-hosted (rather than CDN-loaded) so the preview's font cascade stays
 // independent of third-party uptime / TLS / CSP quirks.
 const CSS_LINKS = `

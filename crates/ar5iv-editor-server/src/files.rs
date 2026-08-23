@@ -725,10 +725,17 @@ fn archive_status_header(status_code: i32, status: &str) -> String {
         .collect()
 }
 
-/// ar5iv stylesheets (copied in from `~/git/ar5iv-css/css` into
-/// `frontend/public/css/`) embedded at compile time so the export
-/// route doesn't depend on the static-dir layout. Same files the live
+/// ar5iv stylesheets embedded at compile time so the export route
+/// doesn't depend on the static-dir layout. Same files the live
 /// preview's shadow root pulls via `/static/css/...`.
+///
+/// `ar5iv.css` MUST be the self-contained bundle
+/// `~/git/ar5iv-css/dist/ar5iv.min.css` (the `lightningcss --bundle`
+/// output), NOT the source `css/ar5iv.css`. Since ar5iv-css 0.9.x the
+/// source `css/ar5iv.css` `@import`s partials from `css/ar5iv/` (tokens,
+/// a11y, dark-mode, print); we serve a single flat file, so those imports
+/// would 404 and silently drop the whole dark-mode inversion layer.
+/// `ar5iv-fonts.css` is copied verbatim from `~/git/ar5iv-css/css/`.
 pub(crate) const AR5IV_CSS: &[u8] = include_bytes!("../../../frontend/public/css/ar5iv.css");
 pub(crate) const AR5IV_FONTS_CSS: &[u8] =
     include_bytes!("../../../frontend/public/css/ar5iv-fonts.css");
