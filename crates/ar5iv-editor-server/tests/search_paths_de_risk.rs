@@ -17,7 +17,9 @@ use std::sync::mpsc;
 
 use latexml::converter::Converter as OxideConverter;
 use latexml::post::{PostOptions, run_post_processing};
-use latexml_core::common::{Config as OxideConfig, DataSize, OutputFormat};
+use latexml_core::common::{
+    Config as OxideConfig, DataSize, OutputFormat, RUNAWAY_ABSORB_LIMIT, RUNAWAY_IF_LIMIT,
+};
 use tempfile::TempDir;
 
 /// Smallest 1×1 RGBA PNG the author could find that decodes cleanly.
@@ -85,11 +87,14 @@ fn convert_with_search_paths(
                 search_paths: Some(search_paths),
                 include_comments: Some(false),
                 strict: None,
-                include_styles: None,
+                include_styles: Some(true),
+                if_limit: Some(RUNAWAY_IF_LIMIT),
+                absorb_limit: Some(RUNAWAY_ABSORB_LIMIT),
                 nomathparse: None,
                 source_map: None,
                 inputencoding: None,
                 streaming: None,
+                source_date_epoch: None,
             };
             let converter = OxideConverter::from_config(opts);
             let resp = converter.convert(format!("literal:{tex}"));
@@ -106,7 +111,7 @@ fn convert_with_search_paths(
                     destination: None,
                     source_directory: None,
                     search_paths: &[],
-                    nodefaultresources: true,
+                    default_resources: false,
                     css_files: &[],
                     js_files: &[],
                     noinvisibletimes: false,

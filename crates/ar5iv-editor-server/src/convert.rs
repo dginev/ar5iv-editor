@@ -8,7 +8,9 @@ use ar5iv_editor_protocol::{
 };
 use latexml::converter::Converter as OxideConverter;
 use latexml::post::{PostOptions, run_post_processing};
-use latexml_core::common::{Config as OxideConfig, DataSize, OutputFormat};
+use latexml_core::common::{
+    Config as OxideConfig, DataSize, OutputFormat, RUNAWAY_ABSORB_LIMIT, RUNAWAY_IF_LIMIT,
+};
 use tokio::sync::oneshot;
 use tracing::error;
 
@@ -382,11 +384,13 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         // resolve to files the user has uploaded.
         search_paths: Some(vec![session.dir.to_string_lossy().into_owned()]),
         include_comments: Some(false),
-        // Non-strict, no raw-.sty loading: match the engine's own LSP config
-        // (latexml_oxide::lsp_server::document::make_config). ar5iv.sty, when
-        // preloaded, is what enables local raw-style handling — not this flag.
+        // Non-strict, raw `.sty`/`.cls` loading and the runaway limits: match the
+        // engine's own LSP config (latexml_oxide::lsp_server::document::make_config),
+        // which takes the CLI's defaults since 0.8.0 (OXIDIZED_DESIGN_DIVERGENCES #1080).
         strict: None,
-        include_styles: None,
+        include_styles: Some(true),
+        if_limit: Some(RUNAWAY_IF_LIMIT),
+        absorb_limit: Some(RUNAWAY_ABSORB_LIMIT),
         nomathparse: None,
         // Always on for the editor: the whole point of this backend is the
         // live source↔preview sync, which rides the `data-sourcepos`
@@ -399,6 +403,8 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         // bounded and latency-sensitive; the streaming path trades peak RSS for
         // interleave overhead, which we don't want on the live-preview lane.
         streaming: None,
+        // An editor buffer is no dated source bundle: `\today` stays Perl's (as the LSP).
+        source_date_epoch: None,
     };
 
     let t_total = Instant::now();
@@ -481,7 +487,7 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         // files, and the session dir is already on the search path via
         // `source_directory` above.
         search_paths: &[],
-        nodefaultresources: true,
+        default_resources: false,
         css_files: &[],
         js_files: &[],
         noinvisibletimes: false,
@@ -621,11 +627,13 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
         preload: None,
         search_paths: Some(vec![session.dir.to_string_lossy().into_owned()]),
         include_comments: Some(false),
-        // Non-strict, no raw-.sty loading: match the engine's own LSP config
-        // (latexml_oxide::lsp_server::document::make_config). ar5iv.sty, when
-        // preloaded, is what enables local raw-style handling — not this flag.
+        // Non-strict, raw `.sty`/`.cls` loading and the runaway limits: match the
+        // engine's own LSP config (latexml_oxide::lsp_server::document::make_config),
+        // which takes the CLI's defaults since 0.8.0 (OXIDIZED_DESIGN_DIVERGENCES #1080).
         strict: None,
-        include_styles: None,
+        include_styles: Some(true),
+        if_limit: Some(RUNAWAY_IF_LIMIT),
+        absorb_limit: Some(RUNAWAY_ABSORB_LIMIT),
         nomathparse: None,
         // No source map: this is a downloadable bundle, not the live
         // editor preview — the `data-sourcepos` cruft isn't wanted.
@@ -635,6 +643,8 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
         // bounded and latency-sensitive; the streaming path trades peak RSS for
         // interleave overhead, which we don't want on the live-preview lane.
         streaming: None,
+        // An editor buffer is no dated source bundle: `\today` stays Perl's (as the LSP).
+        source_date_epoch: None,
     };
     let converter = OxideConverter::from_config(opts);
     let resp = converter.convert(abs_path.to_string_lossy().into_owned());
@@ -674,7 +684,7 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
         // files, and the session dir is already on the search path via
         // `source_directory` above.
         search_paths: &[],
-        nodefaultresources: true,
+        default_resources: false,
         css_files: &[],
         js_files: &[],
         noinvisibletimes: false,
