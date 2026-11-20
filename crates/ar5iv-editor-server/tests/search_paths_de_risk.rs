@@ -131,6 +131,7 @@ fn convert_with_search_paths(
                     timestamp: None,
                     site_directory: None,
                     whatsout: latexml_post::extract::Whatsout::Document,
+                    ..PostOptions::default()
                 };
                 run_post_processing(&xml, &post_opts)
             };

@@ -517,6 +517,8 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         // No split-site output in the editor preview.
         site_directory: None,
         whatsout: latexml_post::extract::Whatsout::Document,
+        // Fields this literal leaves out (e.g. `unicodemath`, latexml-oxide #928) keep the engine's defaults.
+        ..PostOptions::default()
     };
     let t2 = Instant::now();
     let html_raw = run_post_processing(&xml, &post_opts);
@@ -713,6 +715,8 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
         schemadocs: false,
         site_directory: None,
         whatsout: latexml_post::extract::Whatsout::Archive,
+        // Fields this literal leaves out (e.g. `unicodemath`, latexml-oxide #928) keep the engine's defaults.
+        ..PostOptions::default()
     };
     let html = run_post_processing(&xml, &post_opts);
     if html.trim().is_empty() {
