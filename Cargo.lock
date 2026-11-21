@@ -1211,9 +1211,9 @@ dependencies = [
 
 [[package]]
 name = "kpathsea"
-version = "0.3.4"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c573f825f32403aef75bbd955c3427d55e8230e40f0d9b0a98330637b5c8fe1f"
+checksum = "18d35effc29fc66e386858397bfee2463c7cbe40b747a54653268f4ad256bb7f"
 dependencies = [
  "kpathsea_sys",
  "which",
@@ -1232,7 +1232,7 @@ dependencies = [
 
 [[package]]
 name = "latexml"
-version = "0.7.6"
+version = "0.8.0-rc1"
 dependencies = [
  "chrono",
  "clap",
@@ -1261,7 +1261,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_codegen"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "glob",
  "latexml_core",
@@ -1273,7 +1273,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_contrib"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "latexml_codegen",
  "latexml_core",
@@ -1288,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "flate2",
  "kpathsea",
@@ -1312,7 +1312,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_engine"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "flate2",
@@ -1327,7 +1327,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_math_parser"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "latexml_core",
  "libxml",
@@ -1338,7 +1338,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_package"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.23.1",
  "latexml_codegen",
@@ -1352,7 +1352,7 @@ dependencies = [
 
 [[package]]
 name = "latexml_post"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "flate2",
  "imagesize",
