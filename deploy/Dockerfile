@@ -65,14 +65,14 @@ ARG VALIDATOR_SHA=unknown
 # threads; matters most because BuildKit runs the builder and formats
 # stages in parallel, so two uncapped cargo builds can thrash a host.
 ARG CARGO_JOBS=0
-# TEMPORARY: pin the build toolchain to a known-good nightly. Floating
-# `nightly` in (2026-07-27, 2026-08-04] has a fat-LTO memory-usage regression
-# that OOM-kills the ar5iv_editor + maxperf-cortex compiles (a single rustc
-# balloons to ~231 GB RSS). 2026-07-27 peaks at 5.3 GB. Overrides the floating
+# Pin the build toolchain to the nightly the latexml-oxide release it ships was
+# built with (0.8.0-rc1: nightly-2026-11-21, its release-prepare job), so the
+# editor's engine is compiled as the release binaries are. Overrides the floating
 # `nightly` in both repos' rust-toolchain.toml for THIS stage only (the debug
-# `formats` stage does no fat-LTO, so it stays on floating nightly). See
-# latexml-oxide#512 — revert to floating `nightly` once upstream fixes it.
-ARG RUST_NIGHTLY=nightly-2026-07-27
+# `formats` stage stays on floating nightly). History: 2026-07-27 was pinned while
+# nightlies (2026-07-27, 2026-08-04] OOM-killed fat-LTO compiles (latexml-oxide#512,
+# closed 2026-08-16); that pin is too old for filetime 0.2.29 (`fs_set_times`).
+ARG RUST_NIGHTLY=nightly-2026-11-21
 
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
