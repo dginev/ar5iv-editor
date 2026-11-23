@@ -66,13 +66,13 @@ ARG VALIDATOR_SHA=unknown
 # stages in parallel, so two uncapped cargo builds can thrash a host.
 ARG CARGO_JOBS=0
 # Pin the build toolchain to the nightly the latexml-oxide release it ships was
-# built with (0.8.0-rc1: nightly-2026-11-21, its release-prepare job), so the
+# built with (0.8.0-rc2: nightly-2026-11-23, its release-prepare job), so the
 # editor's engine is compiled as the release binaries are. Overrides the floating
 # `nightly` in both repos' rust-toolchain.toml for THIS stage only (the debug
 # `formats` stage stays on floating nightly). History: 2026-07-27 was pinned while
 # nightlies (2026-07-27, 2026-08-04] OOM-killed fat-LTO compiles (latexml-oxide#512,
 # closed 2026-08-16); that pin is too old for filetime 0.2.29 (`fs_set_times`).
-ARG RUST_NIGHTLY=nightly-2026-11-21
+ARG RUST_NIGHTLY=nightly-2026-11-23
 
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
