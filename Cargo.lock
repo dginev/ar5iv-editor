@@ -1232,7 +1232,7 @@ dependencies = [
 
 [[package]]
 name = "latexml"
-version = "0.8.0-rc1"
+version = "0.8.0-rc2"
 dependencies = [
  "chrono",
  "clap",
@@ -1302,6 +1302,7 @@ dependencies = [
  "regex",
  "rustc-hash",
  "rustix",
+ "serde",
  "stacker",
  "string-interner",
  "unicode-normalization",

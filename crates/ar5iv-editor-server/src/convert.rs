@@ -405,6 +405,8 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         streaming: None,
         // An editor buffer is no dated source bundle: `\today` stays Perl's (as the LSP).
         source_date_epoch: None,
+        // The core result comes back as a `String` (no file handoff), as in the LSP.
+        handoff_file: None,
     };
 
     let t_total = Instant::now();
@@ -647,6 +649,8 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
         streaming: None,
         // An editor buffer is no dated source bundle: `\today` stays Perl's (as the LSP).
         source_date_epoch: None,
+        // The core result comes back as a `String` (no file handoff), as in the LSP.
+        handoff_file: None,
     };
     let converter = OxideConverter::from_config(opts);
     let resp = converter.convert(abs_path.to_string_lossy().into_owned());
