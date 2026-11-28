@@ -407,6 +407,8 @@ fn convert_one(req: ConvertRequest, session: &Session) -> ConvertResponse {
         source_date_epoch: None,
         // The core result comes back as a `String` (no file handoff), as in the LSP.
         handoff_file: None,
+        // No `--documentid`: the root carries no `xml:id` prefix, as in the LSP.
+        documentid: None,
     };
 
     let t_total = Instant::now();
@@ -651,6 +653,8 @@ fn convert_one_archive(session: &Session) -> ArchiveResult {
         source_date_epoch: None,
         // The core result comes back as a `String` (no file handoff), as in the LSP.
         handoff_file: None,
+        // No `--documentid`: the root carries no `xml:id` prefix, as in the LSP.
+        documentid: None,
     };
     let converter = OxideConverter::from_config(opts);
     let resp = converter.convert(abs_path.to_string_lossy().into_owned());

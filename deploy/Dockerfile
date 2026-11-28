@@ -72,7 +72,7 @@ ARG CARGO_JOBS=0
 # `formats` stage stays on floating nightly). History: 2026-07-27 was pinned while
 # nightlies (2026-07-27, 2026-08-04] OOM-killed fat-LTO compiles (latexml-oxide#512,
 # closed 2026-08-16); that pin is too old for filetime 0.2.29 (`fs_set_times`).
-ARG RUST_NIGHTLY=nightly-2026-11-23
+ARG RUST_NIGHTLY=nightly-2026-11-26
 
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \

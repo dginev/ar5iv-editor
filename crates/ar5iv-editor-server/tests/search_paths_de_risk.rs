@@ -96,6 +96,7 @@ fn convert_with_search_paths(
                 streaming: None,
                 source_date_epoch: None,
                 handoff_file: None,
+                documentid: None,
             };
             let converter = OxideConverter::from_config(opts);
             let resp = converter.convert(format!("literal:{tex}"));
